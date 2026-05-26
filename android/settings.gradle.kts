@@ -16,4 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "hermes-livechat-android"
 include(":hermes-livechat")
-include(":sample-app")
+include(":hermes-livechat-sample")

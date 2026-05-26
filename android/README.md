@@ -424,7 +424,7 @@ try {
 
 ## 本仓库 sample app
 
-仓库内提供一个最小 Android 宿主 App：`sdk/android/sample-app`。
+仓库内提供一个最小 Android 宿主 App：`sdk/android/hermes-livechat-sample`。
 
 构建 debug APK：
 
@@ -433,13 +433,13 @@ cd sdk/android
 JAVA_HOME=$(/usr/libexec/java_home -v 17) \
 ANDROID_HOME=/opt/homebrew/share/android-commandlinetools \
 ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools \
-./gradlew :sample-app:assembleDebug
+./gradlew :hermes-livechat-sample:assembleDebug
 ```
 
 安装到设备或模拟器：
 
 ```bash
-adb install -r sample-app/build/outputs/apk/debug/sample-app-debug.apk
+adb install -r hermes-livechat-sample/build/outputs/apk/debug/hermes-livechat-sample-debug.apk
 ```
 
 sample app 首屏可以手动修改 `baseUrl`、`realtimeUrl`、`appKey`、`customerId`，点“打开客服”进入默认聊天页。sample app 已将 `startSessionOnOpen` 设为 `true`，用于验证退出后再打开仍恢复同一会话历史。测试环境如果使用 HTTP，sample app 已设置 `android:usesCleartextTraffic="true"`。
@@ -457,7 +457,7 @@ ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools \
 Lint：
 
 ```bash
-./gradlew :sample-app:lintDebug
+./gradlew :hermes-livechat-sample:lintDebug
 ```
 
 真机 / 模拟器验证清单见 [livechat-sdk-integration-verification.md](../../docs/design/livechat-sdk-integration-verification.md)。
