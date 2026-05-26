@@ -17,7 +17,7 @@ Hermes LiveChat Android SDK 用于原生 Android App 内接入在线客服。提
 7. API 接口速查
 8. 生命周期和 session
 9. 错误处理
-10. sample app 和本地验证
+10. 本地构建 SDK
 
 ## 接入前准备
 
@@ -422,28 +422,6 @@ SDK 默认无需额外 consumer ProGuard 规则。debug 构建无需额外配置
 
 如果宿主 App 开启 R8 后遇到 `centrifuge-java`、OkHttp、Kotlin coroutine 或 JSON 反射相关问题，先保留对应三方库，并把错误堆栈反馈给 SDK 维护方补充 `consumer-rules.pro`。
 
-## 本仓库 sample app
-
-仓库内提供一个最小 Android 宿主 App：`sdk/android/hermes-livechat-sample`。
-
-构建 debug APK：
-
-```bash
-cd sdk/android
-JAVA_HOME=$(/usr/libexec/java_home -v 17) \
-ANDROID_HOME=/opt/homebrew/share/android-commandlinetools \
-ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools \
-./gradlew :hermes-livechat-sample:assembleDebug
-```
-
-安装到设备或模拟器：
-
-```bash
-adb install -r hermes-livechat-sample/build/outputs/apk/debug/hermes-livechat-sample-debug.apk
-```
-
-sample app 首屏可以手动修改 `baseUrl`、`realtimeUrl`、`appKey`、`customerId`，点“打开客服”进入默认聊天页。sample app 已将 `startSessionOnOpen` 设为 `true`，用于验证退出后再打开仍恢复同一会话历史。测试环境如果使用 HTTP，sample app 已设置 `android:usesCleartextTraffic="true"`。
-
 ## 本地构建 SDK
 
 ```bash
@@ -457,5 +435,5 @@ ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools \
 Lint：
 
 ```bash
-./gradlew :hermes-livechat-sample:lintDebug
+./gradlew :hermes-livechat:lintDebug
 ```
