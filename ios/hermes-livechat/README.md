@@ -1,10 +1,10 @@
 # Hermes LiveChat iOS Sample App
 
-This sample app is a minimal UIKit host for manually testing the iOS SDK.
+This sample app is a minimal UIKit host for manually testing the iOS SDK. The installed app name is `hermes-livechat`.
 
 ## Run
 
-Open `SampleApp.xcodeproj` in Xcode, select the `SampleApp` target, and run on an iOS Simulator or a signed device.
+Open `hermes-livechat.xcodeproj` in Xcode, select the `hermes-livechat` target, and run on an iOS Simulator or a signed device.
 
 The form mirrors the Android sample app:
 
@@ -13,7 +13,7 @@ The form mirrors the Android sample app:
 - `appKey`
 - `customerId`
 
-Default values are defined in `SampleApp/SampleConfig.swift`.
+Default values are defined in `hermes-livechat/SampleConfig.swift`.
 
 The app configures `HermesLiveChat` and opens the default chat page with `startSessionOnOpen` enabled.
 
@@ -21,8 +21,8 @@ The app configures `HermesLiveChat` and opens the default chat page with `startS
 
 ```bash
 xcodebuild \
-  -project SampleApp.xcodeproj \
-  -target SampleApp \
+  -project hermes-livechat.xcodeproj \
+  -target hermes-livechat \
   -configuration Debug \
   -sdk iphonesimulator \
   -derivedDataPath build \

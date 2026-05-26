@@ -402,10 +402,10 @@ UIKit / simulator 编译必须使用完整 Xcode 环境。可在宿主测试 App
 本目录已提供最小宿主测试 App：
 
 ```bash
-cd sdk/ios/SampleApp
+cd sdk/ios/hermes-livechat
 xcodebuild \
-  -project SampleApp.xcodeproj \
-  -scheme SampleApp \
+  -project hermes-livechat.xcodeproj \
+  -scheme hermes-livechat \
   -configuration Debug \
   -sdk iphonesimulator \
   -derivedDataPath build \
@@ -413,7 +413,7 @@ xcodebuild \
   build
 ```
 
-Xcode 也可以直接打开 `sdk/ios/SampleApp/SampleApp.xcodeproj`，选择 `SampleApp` scheme 后运行。
+Xcode 也可以直接打开 `sdk/ios/hermes-livechat/hermes-livechat.xcodeproj`，选择 `hermes-livechat` scheme 后运行。
 
 真机 / 模拟器验证清单见 [livechat-sdk-integration-verification.md](../../docs/design/livechat-sdk-integration-verification.md)。
 

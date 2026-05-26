@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "0A1B2C3D4E5F600000000501"
-               BuildableName = "HermesLiveChatSample.app"
-               BlueprintName = "SampleApp"
-               ReferencedContainer = "container:SampleApp.xcodeproj">
+               BuildableName = "hermes-livechat.app"
+               BlueprintName = "hermes-livechat"
+               ReferencedContainer = "container:hermes-livechat.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -44,9 +44,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "0A1B2C3D4E5F600000000501"
-            BuildableName = "HermesLiveChatSample.app"
-            BlueprintName = "SampleApp"
-            ReferencedContainer = "container:SampleApp.xcodeproj">
+            BuildableName = "hermes-livechat.app"
+            BlueprintName = "hermes-livechat"
+            ReferencedContainer = "container:hermes-livechat.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -61,9 +61,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "0A1B2C3D4E5F600000000501"
-            BuildableName = "HermesLiveChatSample.app"
-            BlueprintName = "SampleApp"
-            ReferencedContainer = "container:SampleApp.xcodeproj">
+            BuildableName = "hermes-livechat.app"
+            BlueprintName = "hermes-livechat"
+            ReferencedContainer = "container:hermes-livechat.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

@@ -17,7 +17,7 @@
 		0A1B2C3D4E5F600000000101 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		0A1B2C3D4E5F600000000102 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
 		0A1B2C3D4E5F600000000103 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		0A1B2C3D4E5F600000000104 /* HermesLiveChatSample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HermesLiveChatSample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0A1B2C3D4E5F600000000104 /* hermes-livechat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "hermes-livechat.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A1B2C3D4E5F600000000105 /* SampleConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleConfig.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -36,12 +36,12 @@
 		0A1B2C3D4E5F600000000401 = {
 			isa = PBXGroup;
 			children = (
-				0A1B2C3D4E5F600000000402 /* SampleApp */,
+				0A1B2C3D4E5F600000000402 /* hermes-livechat */,
 				0A1B2C3D4E5F600000000403 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		0A1B2C3D4E5F600000000402 /* SampleApp */ = {
+		0A1B2C3D4E5F600000000402 /* hermes-livechat */ = {
 			isa = PBXGroup;
 			children = (
 				0A1B2C3D4E5F600000000101 /* AppDelegate.swift */,
@@ -49,13 +49,13 @@
 				0A1B2C3D4E5F600000000105 /* SampleConfig.swift */,
 				0A1B2C3D4E5F600000000103 /* Info.plist */,
 			);
-			path = SampleApp;
+			path = "hermes-livechat";
 			sourceTree = "<group>";
 		};
 		0A1B2C3D4E5F600000000403 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				0A1B2C3D4E5F600000000104 /* HermesLiveChatSample.app */,
+				0A1B2C3D4E5F600000000104 /* hermes-livechat.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -63,9 +63,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		0A1B2C3D4E5F600000000501 /* SampleApp */ = {
+		0A1B2C3D4E5F600000000501 /* hermes-livechat */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 0A1B2C3D4E5F600000000901 /* Build configuration list for PBXNativeTarget "SampleApp" */;
+			buildConfigurationList = 0A1B2C3D4E5F600000000901 /* Build configuration list for PBXNativeTarget "hermes-livechat" */;
 			buildPhases = (
 				0A1B2C3D4E5F600000000601 /* Sources */,
 				0A1B2C3D4E5F600000000201 /* Frameworks */,
@@ -75,12 +75,12 @@
 			);
 			dependencies = (
 			);
-			name = SampleApp;
+			name = "hermes-livechat";
 			packageProductDependencies = (
 				0A1B2C3D4E5F600000000301 /* HermesLiveChat */,
 			);
-			productName = HermesLiveChatSample;
-			productReference = 0A1B2C3D4E5F600000000104 /* HermesLiveChatSample.app */;
+			productName = "hermes-livechat";
+			productReference = 0A1B2C3D4E5F600000000104 /* hermes-livechat.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -98,7 +98,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 0A1B2C3D4E5F600000000801 /* Build configuration list for PBXProject "SampleApp" */;
+			buildConfigurationList = 0A1B2C3D4E5F600000000801 /* Build configuration list for PBXProject "hermes-livechat" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -116,7 +116,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				0A1B2C3D4E5F600000000501 /* SampleApp */,
+				0A1B2C3D4E5F600000000501 /* hermes-livechat */,
 			);
 		};
 /* End PBXProject section */
@@ -267,7 +267,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = SampleApp/Info.plist;
+				INFOPLIST_FILE = "hermes-livechat/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -275,7 +275,8 @@
 				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mobene.hermes.livechat.sample.ios;
-				PRODUCT_NAME = HermesLiveChatSample;
+				PRODUCT_MODULE_NAME = hermeslivechat;
+				PRODUCT_NAME = "hermes-livechat";
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -288,7 +289,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = SampleApp/Info.plist;
+				INFOPLIST_FILE = "hermes-livechat/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -296,7 +297,8 @@
 				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mobene.hermes.livechat.sample.ios;
-				PRODUCT_NAME = HermesLiveChatSample;
+				PRODUCT_MODULE_NAME = hermeslivechat;
+				PRODUCT_NAME = "hermes-livechat";
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -305,7 +307,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		0A1B2C3D4E5F600000000801 /* Build configuration list for PBXProject "SampleApp" */ = {
+		0A1B2C3D4E5F600000000801 /* Build configuration list for PBXProject "hermes-livechat" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				0A1B2C3D4E5F600000000811 /* Debug */,
@@ -314,7 +316,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		0A1B2C3D4E5F600000000901 /* Build configuration list for PBXNativeTarget "SampleApp" */ = {
+		0A1B2C3D4E5F600000000901 /* Build configuration list for PBXNativeTarget "hermes-livechat" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				0A1B2C3D4E5F600000000911 /* Debug */,

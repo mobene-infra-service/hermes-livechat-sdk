@@ -9,7 +9,7 @@ final class ViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Hermes LiveChat Test"
+        title = "hermes-livechat"
         view.backgroundColor = .systemBackground
         buildUi()
     }
@@ -26,7 +26,7 @@ final class ViewController: UIViewController {
         scrollView.addSubview(stack)
 
         let titleLabel = UILabel()
-        titleLabel.text = "Hermes LiveChat Test"
+        titleLabel.text = "hermes-livechat"
         titleLabel.font = .systemFont(ofSize: 24, weight: .semibold)
         titleLabel.textAlignment = .center
         stack.addArrangedSubview(titleLabel)

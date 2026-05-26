@@ -21,7 +21,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        title = "Hermes LiveChat Test"
+        title = "hermes-livechat"
         buildUi()
     }
 
@@ -33,7 +33,7 @@ class MainActivity : Activity() {
         }
 
         root.addView(TextView(this).apply {
-            text = "Hermes LiveChat Test"
+            text = "hermes-livechat"
             textSize = 22f
             gravity = Gravity.CENTER
         })

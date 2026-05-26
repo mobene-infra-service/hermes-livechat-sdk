@@ -10,13 +10,13 @@ android/**/build/
 # iOS / SwiftPM
 ios/.build/
 ios/Package.resolved
-ios/SampleApp/build/
-ios/SampleApp/build-iphoneos/
-ios/SampleApp/DerivedData/
-ios/SampleApp/.spm-cache/
-ios/SampleApp/**/*.xcuserstate
-ios/SampleApp/**/*.xcuserdata/
-ios/SampleApp/**/*.xcarchive/
+ios/hermes-livechat/build/
+ios/hermes-livechat/build-iphoneos/
+ios/hermes-livechat/DerivedData/
+ios/hermes-livechat/.spm-cache/
+ios/hermes-livechat/**/*.xcuserstate
+ios/hermes-livechat/**/*.xcuserdata/
+ios/hermes-livechat/**/*.xcarchive/
 
 # Flutter
 flutter/.dart_tool/
