@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import SwiftCentrifuge
 import UIKit
 
@@ -202,6 +203,7 @@ public final class HermesLiveChat {
             contactId: json["contact_id"] as? Int ?? 0,
             token: json["token"] as? String ?? "",
             tokenExp: json["token_exp"] as? Int ?? 0,
+            realtimeUrl: realtimeUrl,
             lastConversationId: currentConversationId
         )
         stored = session
@@ -217,12 +219,26 @@ public final class HermesLiveChat {
 
     public func sendText(_ text: String, conversationId: String? = nil) async throws -> Message {
         let token = try await validToken()
-        let message = try await requireApi().sendText(
-            token: token,
-            conversationId: conversationId ?? currentConversationId,
-            text: text,
-            clientMsgId: "c_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
-        )
+        let clientMsgId = "c_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let implicitConversation = conversationId == nil
+        let convId = conversationId ?? currentConversationId
+        let message: Message
+        do {
+            message = try await requireApi().sendText(
+                token: token,
+                conversationId: convId,
+                text: text,
+                clientMsgId: clientMsgId
+            )
+        } catch let error as HermesLiveChatException where implicitConversation && error.error == .conversationClosed {
+            forgetCurrentConversation(convId)
+            message = try await requireApi().sendText(
+                token: token,
+                conversationId: nil,
+                text: text,
+                clientMsgId: clientMsgId
+            )
+        }
         rememberConversation(message.conversationId)
         rememberSeen(message.uuid)
         rememberSeen(message.clientMsgId)
@@ -256,15 +272,32 @@ public final class HermesLiveChat {
             headers: presign["headers"] as? [String: String] ?? [:],
             data: data
         )
-        let message = try await requireApi().sendImage(
-            token: token,
-            conversationId: conversationId ?? currentConversationId,
-            key: key,
-            url: downloadURL,
-            mimeType: mimeType,
-            size: data.count,
-            clientMsgId: "c_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
-        )
+        let clientMsgId = "c_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let implicitConversation = conversationId == nil
+        let convId = conversationId ?? currentConversationId
+        let message: Message
+        do {
+            message = try await requireApi().sendImage(
+                token: token,
+                conversationId: convId,
+                key: key,
+                url: downloadURL,
+                mimeType: mimeType,
+                size: data.count,
+                clientMsgId: clientMsgId
+            )
+        } catch let error as HermesLiveChatException where implicitConversation && error.error == .conversationClosed {
+            forgetCurrentConversation(convId)
+            message = try await requireApi().sendImage(
+                token: token,
+                conversationId: nil,
+                key: key,
+                url: downloadURL,
+                mimeType: mimeType,
+                size: data.count,
+                clientMsgId: clientMsgId
+            )
+        }
         rememberConversation(message.conversationId)
         rememberSeen(message.uuid)
         rememberSeen(message.clientMsgId)
@@ -311,12 +344,12 @@ public final class HermesLiveChat {
             let message = Message.from(m)
             if !rememberSeen(message.uuid) || !rememberSeen(message.clientMsgId) { return }
             let conversation = Conversation.from(c)
-            rememberConversation(conversation.uuid)
+            rememberPublicationConversation(conversation)
             emit(.messageReceived(message, conversation))
         case "livechat.conversation.updated":
             guard let c = json["conversation"] as? [String: Any] else { return }
             let conversation = Conversation.from(c)
-            rememberConversation(conversation.uuid)
+            rememberPublicationConversation(conversation)
             emit(.conversationUpdated(conversation))
         case "livechat.message.read":
             guard
@@ -342,17 +375,29 @@ public final class HermesLiveChat {
         stored = session
         if !isExpired(session.tokenExp) { return session.token }
         let json = try await requireApi().initSession(identity: VisitorIdentity(), oldVisitorToken: session.token)
+        let realtimeUrl = ((json["realtime"] as? [String: Any])?["url"] as? String)
+            .flatMap(URL.init(string:)) ?? session.realtimeUrl ?? cfg.realtimeUrl
         let next = StoredSession(
             appKey: session.appKey,
             visitorId: json["visitor_id"] as? String ?? session.visitorId,
             contactId: json["contact_id"] as? Int ?? session.contactId,
             token: json["token"] as? String ?? session.token,
             tokenExp: json["token_exp"] as? Int ?? session.tokenExp,
+            realtimeUrl: realtimeUrl,
             lastConversationId: session.lastConversationId
         )
         stored = next
         store.save(next)
+        realtime?.connect(url: realtimeUrl, token: next.token)
         return next.token
+    }
+
+    private func rememberPublicationConversation(_ conversation: Conversation) {
+        if conversation.status == "closed" {
+            forgetCurrentConversation(conversation.uuid)
+            return
+        }
+        rememberConversation(conversation.uuid)
     }
 
     private func rememberConversation(_ id: String) {
@@ -365,7 +410,28 @@ public final class HermesLiveChat {
                 contactId: session.contactId,
                 token: session.token,
                 tokenExp: session.tokenExp,
+                realtimeUrl: session.realtimeUrl,
                 lastConversationId: id
+            )
+            stored = next
+            store.save(next)
+        }
+    }
+
+    private func forgetCurrentConversation(_ id: String?) {
+        let shouldClear = id == nil || id?.isEmpty == true || currentConversationId == id
+        if shouldClear {
+            currentConversationId = nil
+        }
+        if let session = stored {
+            let next = StoredSession(
+                appKey: session.appKey,
+                visitorId: session.visitorId,
+                contactId: session.contactId,
+                token: session.token,
+                tokenExp: session.tokenExp,
+                realtimeUrl: session.realtimeUrl,
+                lastConversationId: shouldClear ? nil : session.lastConversationId
             )
             stored = next
             store.save(next)
@@ -593,19 +659,69 @@ private struct StoredSession: Codable {
     let contactId: Int
     let token: String
     let tokenExp: Int
+    let realtimeUrl: URL?
     let lastConversationId: String?
 }
 
 private final class SessionStore {
+    private let service = "com.mobene.hermes.livechat.session"
+
     func load(appKey: String) -> StoredSession? {
-        guard let data = UserDefaults.standard.data(forKey: "hermes.livechat.session.\(appKey)") else { return nil }
-        return try? JSONDecoder().decode(StoredSession.self, from: data)
+        if let data = KeychainStore.read(service: service, account: appKey) {
+            return try? JSONDecoder().decode(StoredSession.self, from: data)
+        }
+        let legacyKey = userDefaultsKey(appKey)
+        guard let data = UserDefaults.standard.data(forKey: legacyKey),
+              let session = try? JSONDecoder().decode(StoredSession.self, from: data)
+        else { return nil }
+        save(session)
+        return session
     }
 
     func save(_ session: StoredSession) {
         if let data = try? JSONEncoder().encode(session) {
-            UserDefaults.standard.set(data, forKey: "hermes.livechat.session.\(session.appKey)")
+            if KeychainStore.write(data, service: service, account: session.appKey) {
+                UserDefaults.standard.removeObject(forKey: userDefaultsKey(session.appKey))
+            }
         }
+    }
+
+    private func userDefaultsKey(_ appKey: String) -> String {
+        "hermes.livechat.session.\(appKey)"
+    }
+}
+
+private enum KeychainStore {
+    static func read(service: String, account: String) -> Data? {
+        var query = baseQuery(service: service, account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess else { return nil }
+        return item as? Data
+    }
+
+    static func write(_ data: Data, service: String, account: String) -> Bool {
+        let status = SecItemUpdate(
+            baseQuery(service: service, account: account) as CFDictionary,
+            [kSecValueData as String: data] as CFDictionary
+        )
+        if status == errSecSuccess { return true }
+        if status != errSecItemNotFound { return false }
+
+        var query = baseQuery(service: service, account: account)
+        query[kSecValueData as String] = data
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    private static func baseQuery(service: String, account: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
     }
 }
 
@@ -772,7 +888,7 @@ public final class HermesLiveChatViewController: UIViewController {
                     case .messageReceived(let message, _):
                         addMessage(message)
                     case .conversationUpdated(let conversation):
-                        if conversation.status == "closed" { input.isEnabled = false }
+                        if conversation.status == "closed" { started = false }
                     case .error(let error):
                         addSystem(error.message ?? "\(error.error)")
                     default:

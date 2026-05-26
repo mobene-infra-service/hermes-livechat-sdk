@@ -2,6 +2,9 @@ package com.mobene.hermes.livechat
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
 import io.github.centrifugal.centrifuge.Client
 import io.github.centrifugal.centrifuge.ConnectedEvent
 import io.github.centrifugal.centrifuge.ConnectingEvent
@@ -12,8 +15,13 @@ import io.github.centrifugal.centrifuge.Options
 import io.github.centrifugal.centrifuge.ServerPublicationEvent
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.security.KeyStore
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -259,6 +267,7 @@ object HermesLiveChat {
             contactId = json.getLong("contact_id"),
             token = json.getString("token"),
             tokenExp = json.getLong("token_exp"),
+            realtimeUrl = realtimeUrl,
             lastConversationId = currentConversationId,
         )
         stored = next
@@ -269,12 +278,28 @@ object HermesLiveChat {
 
     suspend fun sendText(text: String, conversationId: String? = null): Message {
         val token = validToken()
-        val message = requireApi().sendText(
-            token = token,
-            conversationId = conversationId ?: currentConversationId,
-            text = text,
-            clientMsgId = newClientMsgId(),
-        )
+        val clientMsgId = newClientMsgId()
+        val implicitConversation = conversationId == null
+        val convId = conversationId ?: currentConversationId
+        val message = try {
+            requireApi().sendText(
+                token = token,
+                conversationId = convId,
+                text = text,
+                clientMsgId = clientMsgId,
+            )
+        } catch (error: HermesLiveChatException) {
+            if (!implicitConversation || error.error != HermesLiveChatError.CONVERSATION_CLOSED) {
+                throw error
+            }
+            forgetCurrentConversation(convId)
+            requireApi().sendText(
+                token = token,
+                conversationId = null,
+                text = text,
+                clientMsgId = clientMsgId,
+            )
+        }
         rememberConversation(message.conversationId)
         rememberSeen(message.uuid)
         rememberSeen(message.clientMsgId)
@@ -298,15 +323,34 @@ object HermesLiveChat {
         )
         val key = presign.getString("key")
         val url = presign.getString("download_url")
-        val message = requireApi().sendImage(
-            token = token,
-            conversationId = conversationId ?: currentConversationId,
-            key = key,
-            url = url,
-            mimeType = mimeType,
-            size = bytes.size,
-            clientMsgId = newClientMsgId(),
-        )
+        val clientMsgId = newClientMsgId()
+        val implicitConversation = conversationId == null
+        val convId = conversationId ?: currentConversationId
+        val message = try {
+            requireApi().sendImage(
+                token = token,
+                conversationId = convId,
+                key = key,
+                url = url,
+                mimeType = mimeType,
+                size = bytes.size,
+                clientMsgId = clientMsgId,
+            )
+        } catch (error: HermesLiveChatException) {
+            if (!implicitConversation || error.error != HermesLiveChatError.CONVERSATION_CLOSED) {
+                throw error
+            }
+            forgetCurrentConversation(convId)
+            requireApi().sendImage(
+                token = token,
+                conversationId = null,
+                key = key,
+                url = url,
+                mimeType = mimeType,
+                size = bytes.size,
+                clientMsgId = clientMsgId,
+            )
+        }
         rememberConversation(message.conversationId)
         rememberSeen(message.uuid)
         rememberSeen(message.clientMsgId)
@@ -349,13 +393,13 @@ object HermesLiveChat {
                 val message = Message.fromJson(messageJson)
                 if (!rememberSeen(message.uuid) || !rememberSeen(message.clientMsgId)) return
                 val conversation = Conversation.fromJson(convJson)
-                rememberConversation(conversation.uuid)
+                rememberPublicationConversation(conversation)
                 _events.tryEmit(HermesLiveChatEvent.MessageReceived(message, conversation))
             }
             "livechat.conversation.updated" -> {
                 val convJson = payload.optJSONObject("conversation") ?: return
                 val conversation = Conversation.fromJson(convJson)
-                rememberConversation(conversation.uuid)
+                rememberPublicationConversation(conversation)
                 val convEvent = payload.optJSONObject("event")?.let { ConversationEvent.fromJson(it) }
                 _events.tryEmit(HermesLiveChatEvent.ConversationUpdated(conversation, convEvent))
             }
@@ -384,15 +428,28 @@ object HermesLiveChat {
         currentConversationId = currentConversationId ?: session.lastConversationId
         if (!isExpired(session.tokenExp)) return session.token
         val json = requireApi().init(VisitorIdentity(), session.token)
+        val realtimeUrl = json.optJSONObject("realtime")?.optString("url")?.takeIf { it.isNotEmpty() }
+            ?: session.realtimeUrl
+            ?: cfg.realtimeUrl
         val next = session.copy(
             visitorId = json.getString("visitor_id"),
             contactId = json.getLong("contact_id"),
             token = json.getString("token"),
             tokenExp = json.getLong("token_exp"),
+            realtimeUrl = realtimeUrl,
         )
         stored = next
         store?.save(next)
+        realtime?.connect(realtimeUrl, next.token)
         return next.token
+    }
+
+    private fun rememberPublicationConversation(conversation: Conversation) {
+        if (conversation.status == "closed") {
+            forgetCurrentConversation(conversation.uuid)
+            return
+        }
+        rememberConversation(conversation.uuid)
     }
 
     private fun rememberConversation(id: String) {
@@ -400,6 +457,16 @@ object HermesLiveChat {
         currentConversationId = id
         val session = stored ?: return
         stored = session.copy(lastConversationId = id)
+        store?.save(stored!!)
+    }
+
+    private fun forgetCurrentConversation(id: String?) {
+        val shouldClear = id.isNullOrEmpty() || currentConversationId == id
+        if (shouldClear) currentConversationId = null
+        val session = stored ?: return
+        stored = session.copy(
+            lastConversationId = if (shouldClear) null else session.lastConversationId,
+        )
         store?.save(stored!!)
     }
 
@@ -639,14 +706,50 @@ private data class StoredSession(
     val contactId: Long,
     val token: String,
     val tokenExp: Long,
+    val realtimeUrl: String?,
     val lastConversationId: String?,
 )
 
 private class SessionStore(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("hermes_livechat", Context.MODE_PRIVATE)
+    private val crypto = SessionCrypto()
 
     fun load(appKey: String): StoredSession? {
-        val raw = prefs.getString("session:$appKey", null) ?: return null
+        val encryptedKey = encryptedKey(appKey)
+        prefs.getString(encryptedKey, null)?.let { raw ->
+            return runCatching { parseSession(appKey, crypto.decrypt(raw)) }.getOrNull()
+        }
+
+        val legacyKey = legacyKey(appKey)
+        val legacy = prefs.getString(legacyKey, null) ?: return null
+        return runCatching { parseSession(appKey, legacy) }.getOrNull()?.also {
+            if (saveEncrypted(it)) {
+                prefs.edit().remove(legacyKey).apply()
+            }
+        }
+    }
+
+    fun save(session: StoredSession) {
+        saveEncrypted(session)
+    }
+
+    private fun saveEncrypted(session: StoredSession): Boolean = runCatching {
+        val json = JSONObject().apply {
+            put("visitor_id", session.visitorId)
+            put("contact_id", session.contactId)
+            put("token", session.token)
+            put("token_exp", session.tokenExp)
+            putOpt("realtime_url", session.realtimeUrl)
+            putOpt("last_conversation_id", session.lastConversationId)
+        }
+        prefs.edit()
+            .putString(encryptedKey(session.appKey), crypto.encrypt(json.toString()))
+            .remove(legacyKey(session.appKey))
+            .apply()
+        true
+    }.getOrDefault(false)
+
+    private fun parseSession(appKey: String, raw: String): StoredSession {
         val json = JSONObject(raw)
         return StoredSession(
             appKey = appKey,
@@ -654,19 +757,53 @@ private class SessionStore(context: Context) {
             contactId = json.getLong("contact_id"),
             token = json.getString("token"),
             tokenExp = json.getLong("token_exp"),
+            realtimeUrl = json.optStringOrNull("realtime_url"),
             lastConversationId = json.optStringOrNull("last_conversation_id"),
         )
     }
 
-    fun save(session: StoredSession) {
-        val json = JSONObject().apply {
-            put("visitor_id", session.visitorId)
-            put("contact_id", session.contactId)
-            put("token", session.token)
-            put("token_exp", session.tokenExp)
-            putOpt("last_conversation_id", session.lastConversationId)
-        }
-        prefs.edit().putString("session:${session.appKey}", json.toString()).apply()
+    private fun legacyKey(appKey: String) = "session:$appKey"
+
+    private fun encryptedKey(appKey: String) = "session:$appKey:v2"
+}
+
+private class SessionCrypto {
+    private val alias = "hermes_livechat_session"
+
+    fun encrypt(raw: String): String {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey())
+        val iv = cipher.iv
+        val encrypted = cipher.doFinal(raw.toByteArray(StandardCharsets.UTF_8))
+        val packed = ByteArray(1 + iv.size + encrypted.size)
+        packed[0] = iv.size.toByte()
+        System.arraycopy(iv, 0, packed, 1, iv.size)
+        System.arraycopy(encrypted, 0, packed, 1 + iv.size, encrypted.size)
+        return Base64.encodeToString(packed, Base64.NO_WRAP)
+    }
+
+    fun decrypt(raw: String): String {
+        val packed = Base64.decode(raw, Base64.NO_WRAP)
+        val ivSize = packed[0].toInt()
+        val iv = packed.copyOfRange(1, 1 + ivSize)
+        val encrypted = packed.copyOfRange(1 + ivSize, packed.size)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, iv))
+        return String(cipher.doFinal(encrypted), StandardCharsets.UTF_8)
+    }
+
+    private fun secretKey(): SecretKey {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (keyStore.getEntry(alias, null) as? KeyStore.SecretKeyEntry)?.secretKey?.let { return it }
+
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true)
+            .build()
+        generator.init(spec)
+        return generator.generateKey()
     }
 }
 

@@ -235,7 +235,10 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
         }
       case ConversationUpdated(:final conversation):
         setState(() {
-          _conversationClosed = conversation.status == 'closed';
+          _conversationClosed = false;
+          if (conversation.status == 'closed') {
+            _hasSession = true;
+          }
         });
       case MessageRead():
         break;

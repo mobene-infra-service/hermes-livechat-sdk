@@ -14,6 +14,7 @@ class StoredSession {
     required this.contactId,
     required this.token,
     required this.tokenExp,
+    this.realtimeUrl,
     this.lastConversationId,
   });
 
@@ -22,6 +23,7 @@ class StoredSession {
   final int contactId;
   final String token;
   final int tokenExp;
+  final String? realtimeUrl;
   final String? lastConversationId;
 
   Map<String, Object?> toJson() => {
@@ -30,6 +32,7 @@ class StoredSession {
         'contact_id': contactId,
         'token': token,
         'token_exp': tokenExp,
+        if (realtimeUrl != null) 'realtime_url': realtimeUrl,
         if (lastConversationId != null)
           'last_conversation_id': lastConversationId,
       };
@@ -41,6 +44,7 @@ class StoredSession {
       contactId: (json['contact_id'] as num).toInt(),
       token: json['token'] as String,
       tokenExp: (json['token_exp'] as num).toInt(),
+      realtimeUrl: json['realtime_url'] as String?,
       lastConversationId: json['last_conversation_id'] as String?,
     );
   }

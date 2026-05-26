@@ -38,13 +38,16 @@ class Session {
 
   StoredSession? _stored;
   String? _currentConversationId;
+  String? _transportUrl;
+  String? _transportToken;
+  ConnectionState _transportState = ConnectionState.idle;
   String? get currentConversationId => _currentConversationId;
 
   void bindLifecycle() {
     _lifecycle ??= AppLifecycleObserver(
       backgroundDisconnectDelay: config.backgroundDisconnectDelay,
       onShouldDisconnect: () async {
-        await transport.disconnect();
+        await disconnect();
       },
       onShouldReconnect: () async {
         if (_stored != null) await ensureConnected();
@@ -86,6 +89,7 @@ class Session {
       contactId: contactId,
       token: token,
       tokenExp: tokenExp,
+      realtimeUrl: realtimeUrl,
       lastConversationId: _currentConversationId,
     );
     await store.save(_stored!);
@@ -202,16 +206,24 @@ class Session {
     final stored = _stored;
     if (stored == null) return;
     final token = await _validToken();
-    await _connectTransport(config.realtimeUrl, token);
+    await _connectTransport(_stored?.realtimeUrl ?? config.realtimeUrl, token);
   }
 
-  Future<void> disconnect() => transport.disconnect();
+  Future<void> disconnect() async {
+    _transportUrl = null;
+    _transportToken = null;
+    _transportState = ConnectionState.idle;
+    await transport.disconnect();
+  }
 
   Future<void> destroy() async {
     await _transportStateSub?.cancel();
     await _transportPubSub?.cancel();
     _lifecycle?.detach();
     _lifecycle = null;
+    _transportUrl = null;
+    _transportToken = null;
+    _transportState = ConnectionState.idle;
     await transport.disconnect();
     await _events.close();
     api.close();
@@ -220,13 +232,32 @@ class Session {
   // ── internals ──────────────────────────────────────────────────────────
 
   Future<void> _connectTransport(String url, String token) async {
+    if (_transportUrl == url &&
+        _transportToken == token &&
+        (_transportState == ConnectionState.connecting ||
+            _transportState == ConnectionState.connected)) {
+      return;
+    }
+    _transportUrl = null;
+    _transportToken = null;
+    _transportState = ConnectionState.connecting;
     await _transportStateSub?.cancel();
     await _transportPubSub?.cancel();
     _transportStateSub = transport.stateStream.listen((state) {
+      _transportState = state;
       _events.add(ConnectionStateChanged(state));
     });
     _transportPubSub = transport.publicationStream.listen(_onPublication);
-    await transport.connect(url: url, token: token);
+    try {
+      await transport.connect(url: url, token: token);
+      _transportUrl = url;
+      _transportToken = token;
+    } catch (_) {
+      _transportUrl = null;
+      _transportToken = null;
+      _transportState = ConnectionState.idle;
+      rethrow;
+    }
   }
 
   void _onPublication(Publication pub) {
@@ -295,16 +326,21 @@ class Session {
     );
     final token = renewed['token'] as String;
     final exp = (renewed['token_exp'] as num).toInt();
+    final realtime = renewed['realtime'];
+    final realtimeUrl = (realtime is Map && realtime['url'] is String)
+        ? realtime['url'] as String
+        : stored.realtimeUrl ?? config.realtimeUrl;
     _stored = StoredSession(
       appKey: stored.appKey,
       visitorId: renewed['visitor_id'] as String,
       contactId: (renewed['contact_id'] as num).toInt(),
       token: token,
       tokenExp: exp,
+      realtimeUrl: realtimeUrl,
       lastConversationId: stored.lastConversationId,
     );
     await store.save(_stored!);
-    await transport.setToken(token);
+    await _connectTransport(realtimeUrl, token);
     return token;
   }
 
@@ -375,6 +411,7 @@ class Session {
         contactId: stored.contactId,
         token: stored.token,
         tokenExp: stored.tokenExp,
+        realtimeUrl: stored.realtimeUrl,
         lastConversationId: id,
       );
       store.save(_stored!);
@@ -395,9 +432,8 @@ class Session {
         contactId: stored.contactId,
         token: stored.token,
         tokenExp: stored.tokenExp,
-        lastConversationId: shouldClear && id != null && id.isNotEmpty
-            ? id
-            : stored.lastConversationId,
+        realtimeUrl: stored.realtimeUrl,
+        lastConversationId: shouldClear ? null : stored.lastConversationId,
       );
       store.save(_stored!);
     }

@@ -243,7 +243,7 @@ class HermesLiveChatActivity : Activity() {
                     is HermesLiveChatEvent.ConnectionStateChanged -> status.text = event.state.label()
                     is HermesLiveChatEvent.MessageReceived -> addMessage(event.message)
                     is HermesLiveChatEvent.ConversationUpdated -> {
-                        if (event.conversation.status == "closed") input.isEnabled = false
+                        if (event.conversation.status == "closed") started = false
                     }
                     is HermesLiveChatEvent.MessageRead -> Unit
                     is HermesLiveChatEvent.Error -> addSystemMessage(event.error.message ?: event.error.error.name)

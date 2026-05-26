@@ -32,6 +32,7 @@ class _FakeTransport implements RealtimeTransport {
   final _publications = StreamController<Publication>.broadcast();
 
   bool connectCalled = false;
+  int connectCalls = 0;
   String? lastUrl;
   String? lastToken;
 
@@ -44,6 +45,7 @@ class _FakeTransport implements RealtimeTransport {
   @override
   Future<void> connect({required String url, required String token}) async {
     connectCalled = true;
+    connectCalls += 1;
     lastUrl = url;
     lastToken = token;
     _state.add(ConnectionState.connecting);
@@ -72,6 +74,7 @@ class _FakeApi extends ApiClient {
   int tokenExp = 1778755200;
   int closedFailures = 0;
   String responseConversationId = 'conv_1';
+  String responseRealtimeUrl = 'wss://chat.example.com/connection/websocket';
   final sentConversationIds = <String?>[];
 
   @override
@@ -86,7 +89,7 @@ class _FakeApi extends ApiClient {
       'contact_id': 12345,
       'token': tokenValue,
       'token_exp': tokenExp,
-      'realtime': {'url': 'wss://chat.example.com/connection/websocket'},
+      'realtime': {'url': responseRealtimeUrl},
     };
   }
 
@@ -253,23 +256,72 @@ void main() {
 
       await session.destroy();
     });
+
+    test('reconnects realtime with renewed URL and token', () async {
+      final past = DateTime.now()
+              .subtract(const Duration(hours: 1))
+              .millisecondsSinceEpoch ~/
+          1000;
+      final future = DateTime.now()
+              .add(const Duration(hours: 12))
+              .millisecondsSinceEpoch ~/
+          1000;
+      final store = _MemoryStore();
+      await store.save(
+        StoredSession(
+          appKey: 'app_xxx',
+          visitorId: 'v_1',
+          contactId: 12345,
+          token: 'old_token',
+          tokenExp: past,
+          realtimeUrl: 'wss://old.example.com/connection/websocket',
+        ),
+      );
+      final config = _baseConfig();
+      final api = _FakeApi(config)
+        ..tokenValue = 'renewed_token'
+        ..tokenExp = future
+        ..responseRealtimeUrl = 'wss://new.example.com/connection/websocket';
+      final transport = _FakeTransport();
+      final session = Session(
+        config: config,
+        api: api,
+        transport: transport,
+        store: store,
+      );
+
+      await session.sendText('hello');
+
+      expect(api.lastOldVisitorToken, 'old_token');
+      expect(
+        store._stored?.realtimeUrl,
+        'wss://new.example.com/connection/websocket',
+      );
+      expect(transport.connectCalls, 1);
+      expect(transport.lastUrl, 'wss://new.example.com/connection/websocket');
+      expect(transport.lastToken, 'renewed_token');
+
+      await session.destroy();
+    });
   });
 
   group('Session realtime publications', () {
     late HermesLiveChatConfig config;
     late _FakeApi api;
     late _FakeTransport transport;
+    late _MemoryStore store;
     late Session session;
 
     setUp(() async {
       config = _baseConfig();
       api = _FakeApi(config);
       transport = _FakeTransport();
+      store = _MemoryStore();
       session = Session(
         config: config,
         api: api,
         transport: transport,
-        store: _MemoryStore(),
+        store: store,
       );
       await session.startSession(const VisitorIdentity(customerId: 'cust_1'));
     });
@@ -412,6 +464,7 @@ void main() {
         expect(event.conversation.status, 'closed');
         expect(event.event?.eventType, 'closed');
         expect(session.currentConversationId, isNull);
+        expect(store._stored?.lastConversationId, isNull);
       },
     );
   });

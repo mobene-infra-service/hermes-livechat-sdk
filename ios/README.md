@@ -347,7 +347,7 @@ VisitorIdentity(
 
 ## 生命周期和 session
 
-- SDK 会把 visitor session 按 `appKey` 存在 `UserDefaults`。
+- SDK 会把 visitor session 按 `appKey` 存在 iOS Keychain。
 - `currentConversationId` 会在发消息、拉历史、收到实时事件时更新。
 - visitor token 临近过期时，发送消息、拉历史、已读等操作会自动重走 `/init` 续签。
 - `disconnect()` 只断开 realtime，不清空本地 session。
