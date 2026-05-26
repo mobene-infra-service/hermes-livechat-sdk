@@ -632,8 +632,12 @@ public final class HermesLiveChatViewController: UIViewController {
     private let identity: VisitorIdentity
     private let locale: String?
     private let startSessionOnOpen: Bool
+    private let scroll = UIScrollView()
     private let stack = UIStackView()
     private let input = UITextField()
+    private let composer = UIStackView()
+    private var composerBottomConstraint: NSLayoutConstraint?
+    private var keyboardObservers: [NSObjectProtocol] = []
     private var messageKeys = Set<String>()
     private var started = false
     private var eventsTask: Task<Void, Never>?
@@ -660,6 +664,7 @@ public final class HermesLiveChatViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         buildUI()
+        observeKeyboard()
         observeEvents()
         Task {
             await loadWelcome()
@@ -671,38 +676,92 @@ public final class HermesLiveChatViewController: UIViewController {
 
     deinit {
         eventsTask?.cancel()
+        keyboardObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
     private func buildUI() {
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
-        let scroll = UIScrollView()
+        scroll.alwaysBounceVertical = true
+        scroll.keyboardDismissMode = .interactive
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.addSubview(stack)
+        let tap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
+        tap.cancelsTouchesInView = false
+        scroll.addGestureRecognizer(tap)
         view.addSubview(scroll)
         input.placeholder = "输入消息"
         input.borderStyle = .roundedRect
+        input.returnKeyType = .send
+        input.delegate = self
+        input.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let send = UIButton(type: .system)
         send.setTitle("发送", for: .normal)
         send.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
-        let composer = UIStackView(arrangedSubviews: [input, send])
+        composer.axis = .horizontal
         composer.spacing = 8
         composer.translatesAutoresizingMaskIntoConstraints = false
+        composer.addArrangedSubview(input)
+        composer.addArrangedSubview(send)
         view.addSubview(composer)
+        let bottom = composer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8)
+        composerBottomConstraint = bottom
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: composer.topAnchor),
-            stack.topAnchor.constraint(equalTo: scroll.topAnchor, constant: 12),
-            stack.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: -16),
-            stack.widthAnchor.constraint(equalTo: scroll.widthAnchor, constant: -32),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 12),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -16),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -12),
+            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32),
             composer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
             composer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            composer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
+            bottom,
         ])
+    }
+
+    private func observeKeyboard() {
+        let center = NotificationCenter.default
+        keyboardObservers = [
+            center.addObserver(
+                forName: UIResponder.keyboardWillChangeFrameNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                self?.handleKeyboard(notification)
+            },
+            center.addObserver(
+                forName: UIResponder.keyboardWillHideNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                self?.handleKeyboard(notification)
+            },
+        ]
+    }
+
+    private func handleKeyboard(_ notification: Notification) {
+        guard
+            let userInfo = notification.userInfo,
+            let endFrame = userInfo[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+        else { return }
+        let keyboardFrame = view.convert(endFrame, from: nil)
+        let overlap = max(0, view.bounds.maxY - keyboardFrame.minY - view.safeAreaInsets.bottom)
+        composerBottomConstraint?.constant = -8 - overlap
+        let duration = (userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
+        let curve = (userInfo[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+        let options = UIView.AnimationOptions(rawValue: curve << 16)
+        UIView.animate(
+            withDuration: duration,
+            delay: 0,
+            options: [options, .beginFromCurrentState]
+        ) {
+            self.view.layoutIfNeeded()
+            self.scrollToBottom(animated: false)
+        }
     }
 
     private func observeEvents() {
@@ -765,6 +824,10 @@ public final class HermesLiveChatViewController: UIViewController {
         }
     }
 
+    @objc private func dismissKeyboard() {
+        view.endEditing(true)
+    }
+
     private func addSystem(_ text: String) {
         addBubble(text, mine: false)
     }
@@ -794,6 +857,23 @@ public final class HermesLiveChatViewController: UIViewController {
         label.layer.masksToBounds = true
         label.setContentHuggingPriority(.required, for: .vertical)
         stack.addArrangedSubview(label)
+        scrollToBottom()
+    }
+
+    private func scrollToBottom(animated: Bool = true) {
+        view.layoutIfNeeded()
+        let maxOffsetY = max(
+            -scroll.adjustedContentInset.top,
+            scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
+        )
+        scroll.setContentOffset(CGPoint(x: 0, y: maxOffsetY), animated: animated)
+    }
+}
+
+extension HermesLiveChatViewController: UITextFieldDelegate {
+    public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        sendTapped()
+        return false
     }
 }
 
