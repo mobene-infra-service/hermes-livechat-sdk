@@ -1,0 +1,23 @@
+.DS_Store
+.idea/
+.vscode/
+
+# Android
+android/.gradle/
+android/local.properties
+android/**/build/
+
+# iOS / SwiftPM
+ios/.build/
+ios/Package.resolved
+
+# Flutter
+flutter/.dart_tool/
+flutter/.flutter-plugins
+flutter/.flutter-plugins-dependencies
+flutter/.packages
+flutter/.pub-cache/
+flutter/.pub/
+flutter/build/
+flutter/pubspec.lock
+flutter/*.iml
