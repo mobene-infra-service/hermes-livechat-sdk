@@ -10,6 +10,13 @@ android/**/build/
 # iOS / SwiftPM
 ios/.build/
 ios/Package.resolved
+ios/SampleApp/build/
+ios/SampleApp/build-iphoneos/
+ios/SampleApp/DerivedData/
+ios/SampleApp/.spm-cache/
+ios/SampleApp/**/*.xcuserstate
+ios/SampleApp/**/*.xcuserdata/
+ios/SampleApp/**/*.xcarchive/
 
 # Flutter
 flutter/.dart_tool/
