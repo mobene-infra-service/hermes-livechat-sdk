@@ -1,6 +1,6 @@
 # Hermes LiveChat Android SDK 接入
 
-Hermes LiveChat Android SDK 用于原生 Android App 内接入在线客服。P0 提供基础聊天页，也提供能力层 API 供业务 App 自定义 UI。
+Hermes LiveChat Android SDK 用于原生 Android App 内接入在线客服。提供基础聊天页，也提供能力层 API 供业务 App 自定义 UI。
 
 接入方式：App 用公开 `app_key` 初始化；业务用户 ID 作为弱绑定字段传给 LiveChat，用来复用联系人和历史会话，不作为强认证凭据。
 
@@ -30,7 +30,7 @@ Hermes LiveChat Android SDK 用于原生 Android App 内接入在线客服。P0 
 | `realtimeUrl` | `wss://chat.example.com/connection/websocket` | 可选；不传时 SDK 从 `baseUrl` 自动推导 |
 | `customerId` | `u_8f3a...` | 可选；业务侧稳定、不可枚举的用户标识 |
 
-P0 不需要客户 App Backend 签 token，不需要 App secret，也不需要 `X-Arke-Service-Token`。`Secret Key` 不能放进 Android App。
+SDK 不需要客户 App Backend 签 token，不需要 App secret，也不需要 `X-Arke-Service-Token`。`Secret Key` 不能放进 Android App。
 
 后台必须为这个 `appKey` 绑定并启用接待方案：
 
@@ -43,7 +43,7 @@ P0 不需要客户 App Backend 签 token，不需要 App secret，也不需要 `
 
 ## 安装
 
-当前 Android SDK 以 Gradle module 形式维护在 `sdk/android/hermes-livechat`。宿主 App 可以直接引入本地 module，或后续发布到内部 Maven 仓库。
+当前 Android SDK 以 Gradle module 形式维护在 `sdk/android/hermes-livechat`。宿主 App 可以直接引入本地 module，也可以按业务发布流程打包成 Maven 依赖后接入。
 
 本地 module 接入：
 
@@ -190,7 +190,7 @@ HermesLiveChatActivity.open(
 
 默认 UI 不带图片选择器；业务 App 可以继续用能力层的 `sendImage()` 接入自己的图片选择和预览。
 
-`startSessionOnOpen` 默认是 `false`，以保持“打开入口只拉欢迎语，不创建 visitor”的 P0 流程。正式接入聊天页时建议显式设为 `true`：进入页面会立即创建 / 续签 session，并根据 SDK 本地保存的 `lastConversationId` 恢复当前会话历史。否则用户退出聊天页后再打开，只会先看到欢迎语，容易被误认为是新会话。
+`startSessionOnOpen` 默认是 `false`，以保持“打开入口只拉欢迎语，不创建 visitor”的流程。正式接入聊天页时建议显式设为 `true`：进入页面会立即创建 / 续签 session，并根据 SDK 本地保存的 `lastConversationId` 恢复当前会话历史。否则用户退出聊天页后再打开，只会先看到欢迎语，容易被误认为是新会话。
 
 如果业务入口只是“客服预览 / 欢迎语预取”，可以继续使用 `false`；如果入口就是完整聊天页，使用 `true`。
 
@@ -360,7 +360,7 @@ VisitorIdentity(
 - `customerId` 是客户端声明字段，只能做弱绑定，不能当登录态认证结果。
 - 不要传自增 ID、手机号、邮箱等可猜测或敏感值。
 - 建议传稳定、不可枚举的业务用户 ID，或服务端生成的哈希 ID。
-- 如果客户明确要求防伪造，需要后续接入强身份模式；该能力不在 P0。
+- 如需要身份防伪造，请接入服务端签名身份模式。
 
 ## API 接口速查
 
@@ -418,7 +418,7 @@ try {
 
 ## 代码混淆
 
-当前 SDK 暂未提供专门的 consumer ProGuard 规则。默认 debug / 内部测试无需额外配置。
+SDK 默认无需额外 consumer ProGuard 规则。debug 构建无需额外配置。
 
 如果宿主 App 开启 R8 后遇到 `centrifuge-java`、OkHttp、Kotlin coroutine 或 JSON 反射相关问题，先保留对应三方库，并把错误堆栈反馈给 SDK 维护方补充 `consumer-rules.pro`。
 
@@ -459,16 +459,3 @@ Lint：
 ```bash
 ./gradlew :hermes-livechat-sample:lintDebug
 ```
-
-真机 / 模拟器验证清单见 [livechat-sdk-integration-verification.md](../../docs/design/livechat-sdk-integration-verification.md)。
-
-## P0 不包含
-
-- 深度 UI 主题定制和复杂组件插槽
-- 图片选择器、拍照入口、文件选择器
-- FCM 离线推送
-- 语音 / 视频消息
-- 强身份签名模式
-- React Native SDK
-
-完整协议见 [docs/design/livechat-protocol.md](../../docs/design/livechat-protocol.md)。
