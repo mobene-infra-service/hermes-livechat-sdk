@@ -328,7 +328,9 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final hasWelcome = _welcome != null;
+    final hasPersistedWelcome =
+        _messages.any((message) => message.contentType == 'welcome');
+    final hasWelcome = _welcome != null && !hasPersistedWelcome;
     final count = _messages.length + (hasWelcome ? 1 : 0);
     if (count == 0) {
       return Center(
@@ -576,6 +578,9 @@ class _Composer extends StatelessWidget {
 
 String _textForMessage(Message message) {
   if (message.contentType == 'text') {
+    return message.content['text']?.toString() ?? '';
+  }
+  if (message.contentType == 'welcome' || message.contentType == 'close') {
     return message.content['text']?.toString() ?? '';
   }
   if (message.contentType == 'image') {

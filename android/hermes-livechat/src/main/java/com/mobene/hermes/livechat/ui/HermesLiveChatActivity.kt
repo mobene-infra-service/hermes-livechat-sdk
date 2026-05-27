@@ -47,6 +47,8 @@ class HermesLiveChatActivity : Activity() {
     private var started = false
     private var eventsJob: Job? = null
     private val messageKeys = mutableSetOf<String>()
+    private var welcomePlaceholder: View? = null
+    private var hasPersistedWelcome = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -260,7 +262,7 @@ class HermesLiveChatActivity : Activity() {
             runCatching {
                 HermesLiveChat.prefetchWelcome(intent.getStringExtra(EXTRA_LOCALE))
             }.onSuccess {
-                if (it.isNotBlank()) addSystemMessage(it)
+                if (it.isNotBlank()) showWelcomePlaceholder(it)
             }.onFailure {
                 addSystemMessage(it.message ?: "加载欢迎语失败")
             }
@@ -271,12 +273,7 @@ class HermesLiveChatActivity : Activity() {
         if (started) return
         scope.launch {
             runCatching {
-                HermesLiveChat.startSession(identity)
-            }.onSuccess {
-                started = true
-                HermesLiveChat.currentConversationId?.let { conversationId ->
-                    HermesLiveChat.history(conversationId).forEach(::addMessage)
-                }
+                startSessionAndLoadHistory()
             }.onFailure {
                 addSystemMessage(it.message ?: "初始化会话失败")
             }
@@ -290,8 +287,7 @@ class HermesLiveChatActivity : Activity() {
         scope.launch {
             runCatching {
                 if (!started) {
-                    HermesLiveChat.startSession(identity)
-                    started = true
+                    startSessionAndLoadHistory()
                 }
                 HermesLiveChat.sendText(text)
             }.onSuccess(::addMessage).onFailure {
@@ -301,20 +297,48 @@ class HermesLiveChatActivity : Activity() {
         }
     }
 
+    private suspend fun startSessionAndLoadHistory() {
+        HermesLiveChat.startSession(identity)
+        started = true
+        HermesLiveChat.currentConversationId?.let { conversationId ->
+            HermesLiveChat.history(conversationId).forEach(::addMessage)
+        }
+    }
+
     private fun addSystemMessage(text: String) {
         addBubble(text, mine = false)
+    }
+
+    private fun showWelcomePlaceholder(text: String) {
+        if (hasPersistedWelcome) return
+        if (welcomePlaceholder != null) return
+        welcomePlaceholder = addBubble(text, mine = false)
+    }
+
+    private fun removeWelcomePlaceholder() {
+        welcomePlaceholder?.let(messages::removeView)
+        welcomePlaceholder = null
     }
 
     private fun addMessage(message: Message) {
         val key = messageKey(message)
         if (key != null && !messageKeys.add(key)) return
+        if (message.contentType == "welcome") {
+            hasPersistedWelcome = true
+            removeWelcomePlaceholder()
+        }
 
-        val text = when (message.contentType) {
-            "text" -> message.content.optString("text")
+        val text = messageDisplayText(message)
+        addBubble(text, mine = message.senderType == "visitor", createdAt = message.createdAt)
+    }
+
+    private fun messageDisplayText(message: Message): String {
+        val text = message.content.optString("text").trim()
+        if (text.isNotEmpty()) return text
+        return when (message.contentType) {
             "image" -> message.content.optString("url")
             else -> "[${message.contentType}]"
         }
-        addBubble(text, mine = message.senderType == "visitor", createdAt = message.createdAt)
     }
 
     private fun messageKey(message: Message): String? {
@@ -322,7 +346,7 @@ class HermesLiveChatActivity : Activity() {
             ?: message.clientMsgId.takeIf { it.isNotBlank() }
     }
 
-    private fun addBubble(text: String, mine: Boolean, createdAt: Long? = null) {
+    private fun addBubble(text: String, mine: Boolean, createdAt: Long? = null): View {
         val row = LinearLayout(this).apply {
             gravity = if (mine) Gravity.END else Gravity.START
             setPadding(dp(16), dp(4), dp(16), dp(4))
@@ -358,6 +382,7 @@ class HermesLiveChatActivity : Activity() {
         row.addView(column)
         messages.addView(row)
         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+        return row
     }
 
     private fun formatTime(seconds: Long): String =

@@ -8,17 +8,20 @@ public struct HermesLiveChatConfig {
     public let appKey: String
     public let realtimeUrl: URL
     public let refreshLeewaySeconds: TimeInterval
+    public let realtimeIdleDisconnectDelay: TimeInterval
 
     public init(
         baseUrl: URL,
         appKey: String,
         realtimeUrl: URL? = nil,
-        refreshLeewaySeconds: TimeInterval = 60
+        refreshLeewaySeconds: TimeInterval = 60,
+        realtimeIdleDisconnectDelay: TimeInterval = 5 * 60
     ) {
         self.baseUrl = baseUrl
         self.appKey = appKey
         self.realtimeUrl = realtimeUrl ?? HermesLiveChatConfig.deriveRealtimeUrl(baseUrl)
         self.refreshLeewaySeconds = refreshLeewaySeconds
+        self.realtimeIdleDisconnectDelay = realtimeIdleDisconnectDelay
     }
 
     private static func deriveRealtimeUrl(_ baseUrl: URL) -> URL {
@@ -128,7 +131,7 @@ public struct Message: Identifiable {
     public let createdAt: Int
 
     public var displayText: String {
-        if contentType == "text" {
+        if contentType == "text" || contentType == "welcome" || contentType == "close" {
             return content["text"] as? String ?? ""
         }
         if contentType == "image" {
@@ -153,6 +156,10 @@ public final class HermesLiveChat {
     private var api: ApiClient?
     private var realtime: RealtimeClient?
     private var stored: StoredSession?
+    private var realtimeIdleTask: Task<Void, Never>?
+    private var realtimeUrl: URL?
+    private var realtimeToken: String?
+    private var realtimeState: LiveChatConnectionState = .idle
     private var seen = Set<String>()
     private let store = SessionStore()
     private var continuations: [UUID: AsyncStream<HermesLiveChatEvent>.Continuation] = [:]
@@ -162,10 +169,11 @@ public final class HermesLiveChat {
     private init() {}
 
     public func configure(_ config: HermesLiveChatConfig) {
+        disconnect()
         self.config = config
         self.api = ApiClient(config: config)
         self.realtime = RealtimeClient { [weak self] event in
-            self?.emit(event)
+            self?.emitRealtimeEvent(event)
         }
         self.stored = nil
         self.currentConversationId = nil
@@ -208,7 +216,8 @@ public final class HermesLiveChat {
         )
         stored = session
         store.save(session)
-        realtime?.connect(url: realtimeUrl, token: session.token)
+        await refreshCurrentConversation(token: session.token)
+        connectRealtime(url: realtimeUrl, token: session.token)
         return VisitorSession(
             visitorId: session.visitorId,
             contactId: session.contactId,
@@ -218,9 +227,13 @@ public final class HermesLiveChat {
     }
 
     public func sendText(_ text: String, conversationId: String? = nil) async throws -> Message {
-        let token = try await validToken()
-        let clientMsgId = "c_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        var token = try await validToken()
+        let clientMsgId = UUID().uuidString.lowercased()
         let implicitConversation = conversationId == nil
+        if implicitConversation && currentConversationId == nil {
+            token = try await ensureActiveConversation(token: token)
+        }
+        try ensureRealtimeConnected(token: token)
         let convId = conversationId ?? currentConversationId
         let message: Message
         do {
@@ -240,8 +253,9 @@ public final class HermesLiveChat {
             )
         }
         rememberConversation(message.conversationId)
-        rememberSeen(message.uuid)
-        rememberSeen(message.clientMsgId)
+        _ = rememberSeen(message.uuid)
+        _ = rememberSeen(message.clientMsgId)
+        touchRealtimeActivity()
         return message
     }
 
@@ -251,7 +265,7 @@ public final class HermesLiveChat {
         filename: String? = nil,
         conversationId: String? = nil
     ) async throws -> Message {
-        let token = try await validToken()
+        var token = try await validToken()
         let presign = try await requireApi().presign(
             token: token,
             filename: filename ?? defaultImageFilename(mimeType: mimeType),
@@ -272,8 +286,12 @@ public final class HermesLiveChat {
             headers: presign["headers"] as? [String: String] ?? [:],
             data: data
         )
-        let clientMsgId = "c_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let clientMsgId = UUID().uuidString.lowercased()
         let implicitConversation = conversationId == nil
+        if implicitConversation && currentConversationId == nil {
+            token = try await ensureActiveConversation(token: token)
+        }
+        try ensureRealtimeConnected(token: token)
         let convId = conversationId ?? currentConversationId
         let message: Message
         do {
@@ -299,8 +317,9 @@ public final class HermesLiveChat {
             )
         }
         rememberConversation(message.conversationId)
-        rememberSeen(message.uuid)
-        rememberSeen(message.clientMsgId)
+        _ = rememberSeen(message.uuid)
+        _ = rememberSeen(message.clientMsgId)
+        touchRealtimeActivity()
         return message
     }
 
@@ -321,6 +340,11 @@ public final class HermesLiveChat {
     }
 
     public func disconnect() {
+        realtimeIdleTask?.cancel()
+        realtimeIdleTask = nil
+        realtimeUrl = nil
+        realtimeToken = nil
+        realtimeState = .idle
         realtime?.disconnect()
     }
 
@@ -332,6 +356,7 @@ public final class HermesLiveChat {
     }
 
     fileprivate func handlePublication(_ json: [String: Any]) {
+        touchRealtimeActivity()
         if let eventId = json["event_id"] as? String, !rememberSeen(eventId) {
             return
         }
@@ -388,8 +413,89 @@ public final class HermesLiveChat {
         )
         stored = next
         store.save(next)
-        realtime?.connect(url: realtimeUrl, token: next.token)
+        await refreshCurrentConversation(token: next.token)
+        connectRealtime(url: realtimeUrl, token: next.token)
         return next.token
+    }
+
+    private func refreshCurrentConversation(token: String) async {
+        guard let conversations = try? await requireApi().listConversations(token: token) else { return }
+        if let active = conversations.first(where: { $0.status != "closed" }) {
+            rememberConversation(active.uuid)
+        }
+    }
+
+    private func ensureActiveConversation(token: String) async throws -> String {
+        await refreshCurrentConversation(token: token)
+        if currentConversationId != nil { return token }
+        let cfg = try requireConfig()
+        guard let session = stored else { return token }
+        let json = try await requireApi().initSession(identity: VisitorIdentity(), oldVisitorToken: token)
+        let realtimeUrl = ((json["realtime"] as? [String: Any])?["url"] as? String)
+            .flatMap(URL.init(string:)) ?? session.realtimeUrl ?? cfg.realtimeUrl
+        let next = StoredSession(
+            appKey: session.appKey,
+            visitorId: json["visitor_id"] as? String ?? session.visitorId,
+            contactId: json["contact_id"] as? Int ?? session.contactId,
+            token: json["token"] as? String ?? session.token,
+            tokenExp: json["token_exp"] as? Int ?? session.tokenExp,
+            realtimeUrl: realtimeUrl,
+            lastConversationId: session.lastConversationId
+        )
+        stored = next
+        store.save(next)
+        await refreshCurrentConversation(token: next.token)
+        connectRealtime(url: realtimeUrl, token: next.token)
+        return next.token
+    }
+
+    private func ensureRealtimeConnected(token: String) throws {
+        let cfg = try requireConfig()
+        guard let session = stored else { return }
+        connectRealtime(url: session.realtimeUrl ?? cfg.realtimeUrl, token: token)
+    }
+
+    private func connectRealtime(url: URL, token: String) {
+        if realtimeUrl == url && realtimeToken == token && realtimeCanReuse {
+            touchRealtimeActivity()
+            return
+        }
+        realtime?.connect(url: url, token: token)
+        realtimeUrl = url
+        realtimeToken = token
+        realtimeState = .connecting
+        touchRealtimeActivity()
+    }
+
+    private var realtimeCanReuse: Bool {
+        switch realtimeState {
+        case .connecting, .connected:
+            return true
+        case .idle, .disconnected:
+            return false
+        }
+    }
+
+    private func touchRealtimeActivity() {
+        realtimeIdleTask?.cancel()
+        guard let delay = config?.realtimeIdleDisconnectDelay, delay > 0 else { return }
+        let nanoseconds = UInt64(delay * 1_000_000_000)
+        realtimeIdleTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled else { return }
+            self?.disconnect()
+        }
+    }
+
+    private func emitRealtimeEvent(_ event: HermesLiveChatEvent) {
+        if case let .connectionStateChanged(state) = event {
+            realtimeState = state
+            if case .idle = state {
+                realtimeUrl = nil
+                realtimeToken = nil
+            }
+        }
+        emit(event)
     }
 
     private func rememberPublicationConversation(_ conversation: Conversation) {
@@ -542,6 +648,15 @@ private final class ApiClient {
             token: token
         )
         return (json["items"] as? [[String: Any]] ?? []).map(Message.from)
+    }
+
+    func listConversations(token: String) async throws -> [Conversation] {
+        let json = try await get(
+            path: "/api/livechat/v1/conversations",
+            query: ["limit": "20"],
+            token: token
+        )
+        return (json["items"] as? [[String: Any]] ?? []).map(Conversation.from)
     }
 
     func presign(token: String, filename: String, mimeType: String, size: Int) async throws -> [String: Any] {
@@ -757,6 +872,8 @@ public final class HermesLiveChatViewController: UIViewController {
     private var messageKeys = Set<String>()
     private var started = false
     private var eventsTask: Task<Void, Never>?
+    private var welcomePlaceholder: UIView?
+    private var hasPersistedWelcome = false
 
     public init(
         identity: VisitorIdentity,
@@ -902,7 +1019,7 @@ public final class HermesLiveChatViewController: UIViewController {
     private func loadWelcome() async {
         do {
             let welcome = try await HermesLiveChat.shared.prefetchWelcome(locale: locale)
-            if !welcome.isEmpty { await MainActor.run { addSystem(welcome) } }
+            if !welcome.isEmpty { await MainActor.run { showWelcomePlaceholder(welcome) } }
         } catch {
             await MainActor.run { addSystem("加载欢迎语失败") }
         }
@@ -948,9 +1065,26 @@ public final class HermesLiveChatViewController: UIViewController {
         addBubble(text, mine: false, createdAt: nil)
     }
 
+    private func showWelcomePlaceholder(_ text: String) {
+        guard !hasPersistedWelcome else { return }
+        guard welcomePlaceholder == nil else { return }
+        welcomePlaceholder = addBubble(text, mine: false, createdAt: nil)
+    }
+
+    private func removeWelcomePlaceholder() {
+        guard let view = welcomePlaceholder else { return }
+        stack.removeArrangedSubview(view)
+        view.removeFromSuperview()
+        welcomePlaceholder = nil
+    }
+
     private func addMessage(_ message: Message) {
         if let key = messageKey(message), !messageKeys.insert(key).inserted {
             return
+        }
+        if message.contentType == "welcome" {
+            hasPersistedWelcome = true
+            removeWelcomePlaceholder()
         }
         addBubble(message.displayText, mine: message.senderType == "visitor", createdAt: message.createdAt)
     }
@@ -962,7 +1096,8 @@ public final class HermesLiveChatViewController: UIViewController {
         return clientMsgId.isEmpty ? nil : clientMsgId
     }
 
-    private func addBubble(_ text: String, mine: Bool, createdAt: Int?) {
+    @discardableResult
+    private func addBubble(_ text: String, mine: Bool, createdAt: Int?) -> UIView {
         let label = UILabel()
         label.text = text
         label.numberOfLines = 0
@@ -989,6 +1124,7 @@ public final class HermesLiveChatViewController: UIViewController {
 
         stack.addArrangedSubview(column)
         scrollToBottom()
+        return column
     }
 
     private static let timeFormatter: DateFormatter = {

@@ -35,6 +35,7 @@ class Session {
   StreamSubscription? _transportStateSub;
   StreamSubscription? _transportPubSub;
   AppLifecycleObserver? _lifecycle;
+  Timer? _realtimeIdleTimer;
 
   StoredSession? _stored;
   String? _currentConversationId;
@@ -93,6 +94,7 @@ class Session {
       lastConversationId: _currentConversationId,
     );
     await store.save(_stored!);
+    await _refreshCurrentConversation(token);
 
     await _connectTransport(realtimeUrl, token);
     return VisitorSession(
@@ -104,9 +106,13 @@ class Session {
   }
 
   Future<Message> sendText(String text, {String? conversationId}) async {
-    final token = await _validToken();
+    var token = await _validToken();
     final clientMsgId = newClientMsgId();
     final implicitConversation = conversationId == null;
+    if (implicitConversation && _currentConversationId == null) {
+      token = await _ensureActiveConversation(token);
+    }
+    await _ensureRealtimeConnected(token);
     final convId = conversationId ?? _currentConversationId;
     try {
       return await _sendText(token, convId, text, clientMsgId);
@@ -126,7 +132,7 @@ class Session {
     String? filename,
     String? conversationId,
   }) async {
-    final token = await _validToken();
+    var token = await _validToken();
     final presign = await api.presignAttachment(
       visitorToken: token,
       filename: filename ?? defaultImageFilename(mimeType),
@@ -148,6 +154,10 @@ class Session {
     );
     final clientMsgId = newClientMsgId();
     final implicitConversation = conversationId == null;
+    if (implicitConversation && _currentConversationId == null) {
+      token = await _ensureActiveConversation(token);
+    }
+    await _ensureRealtimeConnected(token);
     final convId = conversationId ?? _currentConversationId;
     try {
       return await _sendImage(
@@ -210,6 +220,7 @@ class Session {
   }
 
   Future<void> disconnect() async {
+    _cancelRealtimeIdleTimer();
     _transportUrl = null;
     _transportToken = null;
     _transportState = ConnectionState.idle;
@@ -221,6 +232,7 @@ class Session {
     await _transportPubSub?.cancel();
     _lifecycle?.detach();
     _lifecycle = null;
+    _cancelRealtimeIdleTimer();
     _transportUrl = null;
     _transportToken = null;
     _transportState = ConnectionState.idle;
@@ -236,6 +248,7 @@ class Session {
         _transportToken == token &&
         (_transportState == ConnectionState.connecting ||
             _transportState == ConnectionState.connected)) {
+      _touchRealtimeActivity();
       return;
     }
     _transportUrl = null;
@@ -252,6 +265,7 @@ class Session {
       await transport.connect(url: url, token: token);
       _transportUrl = url;
       _transportToken = token;
+      _touchRealtimeActivity();
     } catch (_) {
       _transportUrl = null;
       _transportToken = null;
@@ -261,6 +275,7 @@ class Session {
   }
 
   void _onPublication(Publication pub) {
+    _touchRealtimeActivity();
     if (!_dedup.add(pub.eventId)) return;
     switch (pub.type) {
       case 'livechat.message.created':
@@ -307,6 +322,12 @@ class Session {
     }
   }
 
+  Future<void> _ensureRealtimeConnected(String token) async {
+    final stored = _stored;
+    if (stored == null) return;
+    await _connectTransport(stored.realtimeUrl ?? config.realtimeUrl, token);
+  }
+
   Future<String> _validToken() async {
     final stored = _stored ?? await store.load(config.appKey);
     if (stored == null) {
@@ -340,8 +361,55 @@ class Session {
       lastConversationId: stored.lastConversationId,
     );
     await store.save(_stored!);
+    await _refreshCurrentConversation(token);
     await _connectTransport(realtimeUrl, token);
     return token;
+  }
+
+  Future<void> _refreshCurrentConversation(String token) async {
+    try {
+      final conversations = await api.listConversations(visitorToken: token);
+      final active = conversations.where((item) => item.status != 'closed');
+      if (active.isNotEmpty) {
+        _rememberConversation(active.first.uuid);
+      }
+    } catch (_) {
+      // Active conversation discovery is only needed for eager history restore;
+      // sending still works because the backend reuses the active conversation.
+    }
+  }
+
+  Future<String> _ensureActiveConversation(String token) async {
+    await _refreshCurrentConversation(token);
+    if (_currentConversationId != null) return token;
+    final stored = _stored;
+    if (stored == null) return token;
+    final json = await api.init(
+      identity: const VisitorIdentity(),
+      oldVisitorToken: token,
+    );
+    final nextToken = json['token'] as String? ?? stored.token;
+    final realtime = json['realtime'];
+    final realtimeUrl = (realtime is Map && realtime['url'] is String)
+        ? realtime['url'] as String
+        : stored.realtimeUrl ?? config.realtimeUrl;
+    _stored = StoredSession(
+      appKey: stored.appKey,
+      visitorId: json['visitor_id'] as String? ?? stored.visitorId,
+      contactId: json['contact_id'] is num
+          ? (json['contact_id'] as num).toInt()
+          : stored.contactId,
+      token: nextToken,
+      tokenExp: json['token_exp'] is num
+          ? (json['token_exp'] as num).toInt()
+          : stored.tokenExp,
+      realtimeUrl: realtimeUrl,
+      lastConversationId: stored.lastConversationId,
+    );
+    await store.save(_stored!);
+    await _refreshCurrentConversation(nextToken);
+    await _connectTransport(realtimeUrl, nextToken);
+    return nextToken;
   }
 
   bool _isExpired(int exp) {
@@ -364,6 +432,7 @@ class Session {
     _dedup.add(msg.clientMsgId);
     _dedup.add(msg.uuid);
     _rememberConversation(msg.conversationId);
+    _touchRealtimeActivity();
     return msg;
   }
 
@@ -388,7 +457,23 @@ class Session {
     _dedup.add(msg.uuid);
     _dedup.add(msg.clientMsgId);
     _rememberConversation(msg.conversationId);
+    _touchRealtimeActivity();
     return msg;
+  }
+
+  void _touchRealtimeActivity() {
+    _realtimeIdleTimer?.cancel();
+    final delay = config.realtimeIdleDisconnectDelay;
+    if (delay <= Duration.zero) return;
+    _realtimeIdleTimer = Timer(delay, () {
+      _realtimeIdleTimer = null;
+      unawaited(disconnect());
+    });
+  }
+
+  void _cancelRealtimeIdleTimer() {
+    _realtimeIdleTimer?.cancel();
+    _realtimeIdleTimer = null;
   }
 
   void _rememberPublicationConversation(Conversation conversation) {

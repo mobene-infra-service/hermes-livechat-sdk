@@ -60,11 +60,11 @@ void main() {
   });
 
   group('newClientMsgId', () {
-    test('produces unique values with c_ prefix', () {
+    test('produces unique UUID values', () {
       final a = newClientMsgId();
       final b = newClientMsgId();
-      expect(a, startsWith('c_'));
-      expect(b, startsWith('c_'));
+      expect(a, matches(RegExp(r'^[0-9a-f-]{36}$')));
+      expect(b, matches(RegExp(r'^[0-9a-f-]{36}$')));
       expect(a, isNot(equals(b)));
     });
   });

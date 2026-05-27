@@ -2,7 +2,7 @@ import 'package:uuid/uuid.dart';
 
 const _uuid = Uuid();
 
-String newClientMsgId() => 'c_${_uuid.v4().replaceAll('-', '')}';
+String newClientMsgId() => _uuid.v4();
 
 String defaultImageFilename(String mimeType) =>
     'image_${_uuid.v4().replaceAll('-', '')}.${imageExtension(mimeType)}';

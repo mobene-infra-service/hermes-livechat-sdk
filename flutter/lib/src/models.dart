@@ -67,7 +67,7 @@ class Message {
   final String senderType;
   final String senderId;
 
-  /// `text` / `image`
+  /// `text` / `image` / `file` / `welcome` / `close`
   final String contentType;
   final Map<String, Object?> content;
   final String? status;

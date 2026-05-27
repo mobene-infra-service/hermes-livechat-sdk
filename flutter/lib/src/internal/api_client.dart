@@ -135,6 +135,22 @@ class ApiClient {
         .toList(growable: false);
   }
 
+  Future<List<Conversation>> listConversations({
+    required String visitorToken,
+    int limit = 20,
+  }) async {
+    final json = await _get(
+      '/api/livechat/v1/conversations',
+      bearerToken: visitorToken,
+      query: {'limit': '$limit'},
+    );
+    final items = (json['items'] as List?) ?? const [];
+    return items
+        .whereType<Map>()
+        .map((e) => Conversation.fromJson(Map<String, Object?>.from(e)))
+        .toList(growable: false);
+  }
+
   Future<Map<String, Object?>> presignAttachment({
     required String visitorToken,
     required String filename,

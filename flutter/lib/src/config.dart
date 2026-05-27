@@ -5,6 +5,7 @@ class HermesLiveChatConfig {
     String? realtimeUrl,
     this.refreshLeewaySeconds = 60,
     this.backgroundDisconnectDelay = const Duration(seconds: 30),
+    this.realtimeIdleDisconnectDelay = const Duration(minutes: 5),
     this.requestTimeout = const Duration(seconds: 10),
     this.logger,
   })  : realtimeUrl = realtimeUrl ?? _deriveRealtimeUrl(baseUrl),
@@ -27,6 +28,10 @@ class HermesLiveChatConfig {
   /// Wait this long after app backgrounding before tearing down the WS.
   /// Short flicker (e.g. system biometric prompt) won't disconnect.
   final Duration backgroundDisconnectDelay;
+
+  /// Tear down the WS after this much time without message send/receive
+  /// activity. The visitor session and active conversation are retained.
+  final Duration realtimeIdleDisconnectDelay;
 
   final Duration requestTimeout;
 

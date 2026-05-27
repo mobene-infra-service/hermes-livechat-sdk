@@ -33,6 +33,7 @@ class _FakeTransport implements RealtimeTransport {
 
   bool connectCalled = false;
   int connectCalls = 0;
+  int disconnectCalls = 0;
   String? lastUrl;
   String? lastToken;
 
@@ -54,6 +55,7 @@ class _FakeTransport implements RealtimeTransport {
 
   @override
   Future<void> disconnect() async {
+    disconnectCalls += 1;
     _state.add(ConnectionState.idle);
   }
 
@@ -75,6 +77,7 @@ class _FakeApi extends ApiClient {
   int closedFailures = 0;
   String responseConversationId = 'conv_1';
   String responseRealtimeUrl = 'wss://chat.example.com/connection/websocket';
+  List<Conversation> conversations = const [];
   final sentConversationIds = <String?>[];
 
   @override
@@ -120,6 +123,14 @@ class _FakeApi extends ApiClient {
       content: {'text': text},
       createdAt: 1778668800 + sentConversationIds.length,
     );
+  }
+
+  @override
+  Future<List<Conversation>> listConversations({
+    required String visitorToken,
+    int limit = 20,
+  }) async {
+    return conversations;
   }
 }
 
@@ -281,7 +292,15 @@ void main() {
       final api = _FakeApi(config)
         ..tokenValue = 'renewed_token'
         ..tokenExp = future
-        ..responseRealtimeUrl = 'wss://new.example.com/connection/websocket';
+        ..responseRealtimeUrl = 'wss://new.example.com/connection/websocket'
+        ..conversations = const [
+          Conversation(
+            uuid: 'conv_1',
+            status: 'assigned',
+            channelType: 'app',
+            channelId: 'app_xxx',
+          ),
+        ];
       final transport = _FakeTransport();
       final session = Session(
         config: config,
@@ -300,6 +319,48 @@ void main() {
       expect(transport.connectCalls, 1);
       expect(transport.lastUrl, 'wss://new.example.com/connection/websocket');
       expect(transport.lastToken, 'renewed_token');
+
+      await session.destroy();
+    });
+
+    test('disconnects idle realtime and reconnects before send', () async {
+      final config = HermesLiveChatConfig(
+        baseUrl: 'https://chat.example.com',
+        appKey: 'app_xxx',
+        realtimeIdleDisconnectDelay: const Duration(milliseconds: 20),
+      );
+      final future = DateTime.now()
+              .add(const Duration(hours: 12))
+              .millisecondsSinceEpoch ~/
+          1000;
+      final api = _FakeApi(config)
+        ..tokenExp = future
+        ..conversations = const [
+          Conversation(
+            uuid: 'conv_1',
+            status: 'assigned',
+            channelType: 'app',
+            channelId: 'app_xxx',
+          ),
+        ];
+      final transport = _FakeTransport();
+      final session = Session(
+        config: config,
+        api: api,
+        transport: transport,
+        store: _MemoryStore(),
+      );
+
+      await session.startSession(const VisitorIdentity());
+      expect(transport.connectCalls, 1);
+
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(transport.disconnectCalls, 1);
+
+      await session.sendText('hello');
+
+      expect(transport.connectCalls, 2);
+      expect(api.sentConversationIds, ['conv_1']);
 
       await session.destroy();
     });
