@@ -6,14 +6,16 @@
 
 默认配置写在 `src/main/java/com/mobene/hermes/livechat/sample/MainActivity.kt`：
 
-| 参数 | 默认值 |
-|---|---|
-| `baseUrl` | `https://hermes-test.financifyx.com/api` |
-| `realtimeUrl` | `wss://hermes-test.financifyx.com/api/connection/websocket` |
-| `appKey` | `app_019e5ed46ccb74cf885dd5bbecf3bde7` |
-| `customerId` | `android-test-user` |
+| 参数 | 默认值 | 必填 |
+|---|---|---|
+| `baseUrl` | `https://hermes-test.financifyx.com/api` | 是 |
+| `realtimeUrl` | `wss://hermes-test.financifyx.com/api/connection/websocket` | 否，留空时 SDK 从 `baseUrl` 自动推导 |
+| `appKey` | `app_019e5ed46ccb74cf885dd5bbecf3bde7` | 是 |
+| `customerId` | `android-test-user` | 否 |
 
 首屏可以手动修改这些参数。点击“打开客服”后，sample app 会初始化 `HermesLiveChat` 并打开默认聊天页。
+
+`baseUrl` 是 livechat 公网根挂载点，可以带网关子路径前缀（例如 `https://hermes-test.financifyx.com/api`，由 hermes-gateway 在该子路径下挂载 livechat 服务）。SDK 内部会在 `baseUrl` 后再拼 `/api/livechat/v1/...`，请不要将 `baseUrl` 写到 `/api/livechat/v1` 这一层。
 
 ## 构建
 

@@ -25,7 +25,7 @@ Hermes LiveChat Android SDK 用于原生 Android App 内接入在线客服。提
 
 | 参数 | 示例 | 说明 |
 |---|---|---|
-| `baseUrl` | `https://chat.example.com` | LiveChat 访客 REST API 公网地址 |
+| `baseUrl` | `https://chat.example.com` | LiveChat 访客 REST API 公网地址。可带网关子路径前缀（例如 `https://hermes-test.financifyx.com/api`），SDK 内部会拼 `/api/livechat/v1/...`，不要写到该层 |
 | `appKey` | `app_xxx` | 管理后台 App 渠道生成的公开 key |
 | `realtimeUrl` | `wss://chat.example.com/connection/websocket` | 可选；不传时 SDK 从 `baseUrl` 自动推导 |
 | `customerId` | `u_8f3a...` | 可选；业务侧稳定、不可枚举的用户标识 |

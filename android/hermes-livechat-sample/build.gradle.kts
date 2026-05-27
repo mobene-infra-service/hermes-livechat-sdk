@@ -27,4 +27,5 @@ android {
 
 dependencies {
     implementation(project(":hermes-livechat"))
+    implementation("androidx.activity:activity-ktx:1.9.3")
 }

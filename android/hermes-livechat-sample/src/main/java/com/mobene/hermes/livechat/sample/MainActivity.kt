@@ -1,19 +1,21 @@
 package com.mobene.hermes.livechat.sample
 
-import android.app.Activity
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.ComponentActivity
 import com.mobene.hermes.livechat.HermesLiveChat
 import com.mobene.hermes.livechat.HermesLiveChatConfig
 import com.mobene.hermes.livechat.VisitorIdentity
 import com.mobene.hermes.livechat.ui.HermesLiveChatActivity
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
     private lateinit var baseUrlInput: EditText
     private lateinit var realtimeUrlInput: EditText
     private lateinit var appKeyInput: EditText
@@ -41,10 +43,12 @@ class MainActivity : Activity() {
         baseUrlInput = field(
             hint = "baseUrl",
             value = DEFAULT_BASE_URL,
+            inputType = InputType.TYPE_TEXT_VARIATION_URI,
         )
         realtimeUrlInput = field(
-            hint = "realtimeUrl",
+            hint = "realtimeUrl（留空由 SDK 从 baseUrl 自动推导）",
             value = DEFAULT_REALTIME_URL,
+            inputType = InputType.TYPE_TEXT_VARIATION_URI,
         )
         appKeyInput = field(
             hint = "appKey",
@@ -53,6 +57,7 @@ class MainActivity : Activity() {
         customerIdInput = field(
             hint = "customerId",
             value = "android-test-user",
+            imeOption = EditorInfo.IME_ACTION_DONE,
         )
 
         root.addView(baseUrlInput)
@@ -67,29 +72,46 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
-    private fun field(hint: String, value: String): EditText {
+    private fun field(
+        hint: String,
+        value: String,
+        inputType: Int = InputType.TYPE_CLASS_TEXT,
+        imeOption: Int = EditorInfo.IME_ACTION_NEXT,
+    ): EditText {
         return EditText(this).apply {
             this.hint = hint
             setText(value)
             setSingleLine(true)
-            imeOptions = EditorInfo.IME_ACTION_NEXT
+            this.inputType = inputType
+            imeOptions = imeOption
         }
     }
 
     private fun openLiveChat() {
         val baseUrl = baseUrlInput.text.toString().trim().trimEnd('/')
-        val realtimeUrl = realtimeUrlInput.text.toString().trim().ifEmpty { DEFAULT_REALTIME_URL }
+        val realtimeUrl = realtimeUrlInput.text.toString().trim()
         val appKey = appKeyInput.text.toString().trim()
         val customerId = customerIdInput.text.toString().trim().ifEmpty { "android-test-user" }
 
-        HermesLiveChat.configure(
-            context = applicationContext,
-            config = HermesLiveChatConfig(
-                baseUrl = baseUrl,
-                appKey = appKey,
-                realtimeUrl = realtimeUrl,
-            ),
-        )
+        if (baseUrl.isEmpty() || !baseUrl.startsWith("http")) {
+            showError("请填写有效的 baseUrl（以 http:// 或 https:// 开头）")
+            return
+        }
+        if (appKey.isEmpty()) {
+            showError("请填写 appKey")
+            return
+        }
+        if (realtimeUrl.isNotEmpty() && !realtimeUrl.startsWith("ws")) {
+            showError("realtimeUrl 必须以 ws:// 或 wss:// 开头")
+            return
+        }
+
+        val config = if (realtimeUrl.isEmpty()) {
+            HermesLiveChatConfig(baseUrl = baseUrl, appKey = appKey)
+        } else {
+            HermesLiveChatConfig(baseUrl = baseUrl, appKey = appKey, realtimeUrl = realtimeUrl)
+        }
+        HermesLiveChat.configure(context = applicationContext, config = config)
 
         HermesLiveChatActivity.open(
             context = this,
@@ -100,6 +122,10 @@ class MainActivity : Activity() {
             ),
             startSessionOnOpen = true,
         )
+    }
+
+    private fun showError(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     companion object {

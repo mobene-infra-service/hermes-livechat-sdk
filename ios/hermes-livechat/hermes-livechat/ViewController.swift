@@ -17,6 +17,7 @@ final class ViewController: UIViewController {
     private func buildUi() {
         let scrollView = UIScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.keyboardDismissMode = .interactive
         view.addSubview(scrollView)
 
         let stack = UIStackView()
@@ -32,7 +33,7 @@ final class ViewController: UIViewController {
         stack.addArrangedSubview(titleLabel)
 
         configureField(baseUrlInput, placeholder: "baseUrl", value: SampleConfig.defaultBaseUrl)
-        configureField(realtimeUrlInput, placeholder: "realtimeUrl", value: SampleConfig.defaultRealtimeUrl)
+        configureField(realtimeUrlInput, placeholder: "realtimeUrl（留空由 SDK 从 baseUrl 自动推导）", value: SampleConfig.defaultRealtimeUrl)
         configureField(appKeyInput, placeholder: "appKey", value: SampleConfig.defaultAppKey)
         configureField(customerIdInput, placeholder: "customerId", value: SampleConfig.defaultCustomerId)
 
@@ -41,14 +42,17 @@ final class ViewController: UIViewController {
         stack.addArrangedSubview(appKeyInput)
         stack.addArrangedSubview(customerIdInput)
 
-        let openButton = UIButton(type: .system)
-        openButton.setTitle("打开客服", for: .normal)
+        var openConfig = UIButton.Configuration.filled()
+        openConfig.title = "打开客服"
+        openConfig.baseBackgroundColor = .systemBlue
+        openConfig.baseForegroundColor = .white
+        openConfig.cornerStyle = .medium
+        openConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16)
+        let openButton = UIButton(
+            configuration: openConfig,
+            primaryAction: UIAction { [weak self] _ in self?.openLiveChat() }
+        )
         openButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
-        openButton.addTarget(self, action: #selector(openLiveChat), for: .touchUpInside)
-        openButton.backgroundColor = .systemBlue
-        openButton.tintColor = .white
-        openButton.layer.cornerRadius = 8
-        openButton.contentEdgeInsets = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
         stack.addArrangedSubview(openButton)
 
         NSLayoutConstraint.activate([
@@ -77,7 +81,7 @@ final class ViewController: UIViewController {
         field.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
     }
 
-    @objc private func openLiveChat() {
+    private func openLiveChat() {
         view.endEditing(true)
 
         let baseUrl = baseUrlInput.trimmedText.trimmingTrailingSlash()
@@ -87,14 +91,22 @@ final class ViewController: UIViewController {
             ? SampleConfig.defaultCustomerId
             : customerIdInput.trimmedText
 
-        guard let base = URL(string: baseUrl), !appKey.isEmpty else {
-            showError("请填写有效的 baseUrl 和 appKey")
+        guard let base = parseHTTPURL(baseUrl) else {
+            showError("请填写有效的 baseUrl（http:// 或 https://，且包含 host）")
+            return
+        }
+        guard !appKey.isEmpty else {
+            showError("请填写 appKey")
             return
         }
 
-        let realtime = realtimeUrl.isEmpty ? nil : URL(string: realtimeUrl)
-        if !realtimeUrl.isEmpty, realtime == nil {
-            showError("请填写有效的 realtimeUrl")
+        let realtime: URL?
+        if realtimeUrl.isEmpty {
+            realtime = nil
+        } else if let parsed = parseWebSocketURL(realtimeUrl) {
+            realtime = parsed
+        } else {
+            showError("realtimeUrl 必须是 ws:// 或 wss:// 且包含 host")
             return
         }
 
@@ -117,6 +129,26 @@ final class ViewController: UIViewController {
             locale: "zh-CN",
             startSessionOnOpen: true
         )
+    }
+
+    private func parseHTTPURL(_ raw: String) -> URL? {
+        return parseURL(raw, allowedSchemes: ["http", "https"])
+    }
+
+    private func parseWebSocketURL(_ raw: String) -> URL? {
+        return parseURL(raw, allowedSchemes: ["ws", "wss"])
+    }
+
+    private func parseURL(_ raw: String, allowedSchemes: Set<String>) -> URL? {
+        guard let components = URLComponents(string: raw),
+              let scheme = components.scheme?.lowercased(),
+              allowedSchemes.contains(scheme),
+              let host = components.host,
+              !host.isEmpty
+        else {
+            return nil
+        }
+        return components.url
     }
 
     private func showError(_ message: String) {
