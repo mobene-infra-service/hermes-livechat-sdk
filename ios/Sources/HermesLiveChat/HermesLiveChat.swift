@@ -945,14 +945,14 @@ public final class HermesLiveChatViewController: UIViewController {
     }
 
     private func addSystem(_ text: String) {
-        addBubble(text, mine: false)
+        addBubble(text, mine: false, createdAt: nil)
     }
 
     private func addMessage(_ message: Message) {
         if let key = messageKey(message), !messageKeys.insert(key).inserted {
             return
         }
-        addBubble(message.displayText, mine: message.senderType == "visitor")
+        addBubble(message.displayText, mine: message.senderType == "visitor", createdAt: message.createdAt)
     }
 
     private func messageKey(_ message: Message) -> String? {
@@ -962,7 +962,7 @@ public final class HermesLiveChatViewController: UIViewController {
         return clientMsgId.isEmpty ? nil : clientMsgId
     }
 
-    private func addBubble(_ text: String, mine: Bool) {
+    private func addBubble(_ text: String, mine: Bool, createdAt: Int?) {
         let label = UILabel()
         label.text = text
         label.numberOfLines = 0
@@ -972,8 +972,33 @@ public final class HermesLiveChatViewController: UIViewController {
         label.layer.cornerRadius = 10
         label.layer.masksToBounds = true
         label.setContentHuggingPriority(.required, for: .vertical)
-        stack.addArrangedSubview(label)
+
+        let column = UIStackView()
+        column.axis = .vertical
+        column.spacing = 2
+        column.alignment = mine ? .trailing : .leading
+        column.addArrangedSubview(label)
+
+        if let createdAt = createdAt, createdAt > 0 {
+            let time = UILabel()
+            time.text = Self.formatTime(createdAt)
+            time.font = .systemFont(ofSize: 11)
+            time.textColor = .secondaryLabel
+            column.addArrangedSubview(time)
+        }
+
+        stack.addArrangedSubview(column)
         scrollToBottom()
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter
+    }()
+
+    private static func formatTime(_ seconds: Int) -> String {
+        timeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(seconds)))
     }
 
     private func scrollToBottom(animated: Bool = true) {

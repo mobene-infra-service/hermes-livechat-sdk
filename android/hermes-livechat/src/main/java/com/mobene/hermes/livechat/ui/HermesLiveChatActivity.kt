@@ -31,6 +31,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.max
 
 class HermesLiveChatActivity : Activity() {
@@ -311,7 +314,7 @@ class HermesLiveChatActivity : Activity() {
             "image" -> message.content.optString("url")
             else -> "[${message.contentType}]"
         }
-        addBubble(text, mine = message.senderType == "visitor")
+        addBubble(text, mine = message.senderType == "visitor", createdAt = message.createdAt)
     }
 
     private fun messageKey(message: Message): String? {
@@ -319,10 +322,14 @@ class HermesLiveChatActivity : Activity() {
             ?: message.clientMsgId.takeIf { it.isNotBlank() }
     }
 
-    private fun addBubble(text: String, mine: Boolean) {
+    private fun addBubble(text: String, mine: Boolean, createdAt: Long? = null) {
         val row = LinearLayout(this).apply {
             gravity = if (mine) Gravity.END else Gravity.START
             setPadding(dp(16), dp(4), dp(16), dp(4))
+        }
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = if (mine) Gravity.END else Gravity.START
         }
         val bubble = TextView(this).apply {
             this.text = text
@@ -338,10 +345,23 @@ class HermesLiveChatActivity : Activity() {
                 radius = dp(16).toFloat(),
             )
         }
-        row.addView(bubble)
+        column.addView(bubble)
+        if (createdAt != null && createdAt > 0) {
+            val time = TextView(this).apply {
+                this.text = formatTime(createdAt)
+                textSize = 11f
+                setTextColor(TEXT_MUTED)
+                setPadding(dp(4), dp(4), dp(4), 0)
+            }
+            column.addView(time)
+        }
+        row.addView(column)
         messages.addView(row)
         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
     }
+
+    private fun formatTime(seconds: Long): String =
+        timeFormatter.format(Date(seconds * 1000))
 
     private fun LiveChatConnectionState.label(): String = when (this) {
         LiveChatConnectionState.IDLE -> "未连接"
@@ -374,6 +394,8 @@ class HermesLiveChatActivity : Activity() {
         private val TEXT_PRIMARY = Color.parseColor("#111827")
         private val TEXT_SECONDARY = Color.parseColor("#475569")
         private val TEXT_MUTED = Color.parseColor("#94A3B8")
+
+        private val timeFormatter = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
 
         private const val EXTRA_IDENTITY = "identity"
         private const val EXTRA_TITLE = "title"
