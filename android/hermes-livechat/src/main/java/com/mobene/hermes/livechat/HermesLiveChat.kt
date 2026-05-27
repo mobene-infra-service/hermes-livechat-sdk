@@ -928,7 +928,7 @@ private fun deriveRealtimeUrl(baseUrl: String): String {
 
 private fun HermesLiveChatConfig.normalizedBaseUrl() = baseUrl.trimEnd('/')
 
-private fun newClientMsgId() = UUID.randomUUID().toString()
+private fun newClientMsgId() = UUID.randomUUID().toString().replace("-", "")
 
 private fun defaultImageFilename(mimeType: String): String =
     "image_${UUID.randomUUID().toString().replace("-", "")}.${imageExtension(mimeType)}"

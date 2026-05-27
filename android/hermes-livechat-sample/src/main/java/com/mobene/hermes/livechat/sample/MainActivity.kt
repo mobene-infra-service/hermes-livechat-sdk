@@ -131,6 +131,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val DEFAULT_BASE_URL = "https://hermes-test.financifyx.com/api"
         private const val DEFAULT_REALTIME_URL = "wss://hermes-test.financifyx.com/api/connection/websocket"
-        private const val DEFAULT_APP_KEY = "app_019e5ed46ccb74cf885dd5bbecf3bde7"
+        private const val DEFAULT_APP_KEY = "019e5ed46ccb74cf885dd5bbecf3bde7"
     }
 }

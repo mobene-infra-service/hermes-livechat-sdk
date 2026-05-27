@@ -60,11 +60,11 @@ void main() {
   });
 
   group('newClientMsgId', () {
-    test('produces unique UUID values', () {
+    test('produces unique UUID hex values', () {
       final a = newClientMsgId();
       final b = newClientMsgId();
-      expect(a, matches(RegExp(r'^[0-9a-f-]{36}$')));
-      expect(b, matches(RegExp(r'^[0-9a-f-]{36}$')));
+      expect(a, matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(b, matches(RegExp(r'^[0-9a-f]{32}$')));
       expect(a, isNot(equals(b)));
     });
   });

@@ -10,7 +10,7 @@
 |---|---|---|
 | `baseUrl` | `https://hermes-test.financifyx.com/api` | 是 |
 | `realtimeUrl` | `wss://hermes-test.financifyx.com/api/connection/websocket` | 否，留空时 SDK 从 `baseUrl` 自动推导 |
-| `appKey` | `app_019e5ed46ccb74cf885dd5bbecf3bde7` | 是 |
+| `appKey` | `019e5ed46ccb74cf885dd5bbecf3bde7` | 是 |
 | `customerId` | `android-test-user` | 否 |
 
 首屏可以手动修改这些参数。点击“打开客服”后，sample app 会初始化 `HermesLiveChat` 并打开默认聊天页。

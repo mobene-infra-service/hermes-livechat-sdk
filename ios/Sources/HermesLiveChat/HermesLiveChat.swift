@@ -228,7 +228,7 @@ public final class HermesLiveChat {
 
     public func sendText(_ text: String, conversationId: String? = nil) async throws -> Message {
         var token = try await validToken()
-        let clientMsgId = UUID().uuidString.lowercased()
+        let clientMsgId = newClientMsgId()
         let implicitConversation = conversationId == nil
         if implicitConversation && currentConversationId == nil {
             token = try await ensureActiveConversation(token: token)
@@ -286,7 +286,7 @@ public final class HermesLiveChat {
             headers: presign["headers"] as? [String: String] ?? [:],
             data: data
         )
-        let clientMsgId = UUID().uuidString.lowercased()
+        let clientMsgId = newClientMsgId()
         let implicitConversation = conversationId == nil
         if implicitConversation && currentConversationId == nil {
             token = try await ensureActiveConversation(token: token)
@@ -1196,6 +1196,10 @@ private extension String {
 
 private func defaultImageFilename(mimeType: String) -> String {
     "image_\(UUID().uuidString.replacingOccurrences(of: "-", with: "")).\(imageExtension(mimeType: mimeType))"
+}
+
+private func newClientMsgId() -> String {
+    UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
 }
 
 private func imageExtension(mimeType: String) -> String {
