@@ -44,6 +44,7 @@ public struct VisitorIdentity: Codable {
     public var avatar: String?
     public var locale: String?
     public var attrs: [String: String]?
+    public var identityToken: String?
 
     public init(
         customerId: String? = nil,
@@ -55,7 +56,8 @@ public struct VisitorIdentity: Codable {
         name: String? = nil,
         avatar: String? = nil,
         locale: String? = nil,
-        attrs: [String: String]? = nil
+        attrs: [String: String]? = nil,
+        identityToken: String? = nil
     ) {
         self.customerId = customerId
         self.externalUserId = externalUserId
@@ -67,6 +69,7 @@ public struct VisitorIdentity: Codable {
         self.avatar = avatar
         self.locale = locale
         self.attrs = attrs
+        self.identityToken = identityToken
     }
 }
 
@@ -100,6 +103,8 @@ public enum HermesLiveChatError: Error {
     case channelDisabled
     case domainNotAllowed
     case orgDisabled
+    case appInitTokenInvalid
+    case appInitTokenExpired
     case realtimeConnectUnauthorized
     case realtimeProviderUnavailable
     case unknown
@@ -192,6 +197,7 @@ public final class HermesLiveChat {
 
     public func prefetchWelcome(locale: String? = nil) async throws -> String {
         let json = try await requireApi().publicConfig(locale: locale)
+        if let welcome = json["welcome"] as? String { return welcome }
         let config = json["config"] as? [String: Any]
         return config?["welcome"] as? String ?? ""
     }
@@ -611,6 +617,7 @@ private final class ApiClient {
         body["number"] = identity.number
         body["locale"] = identity.locale
         body["attrs"] = identity.attrs
+        body["identity_token"] = identity.identityToken
         return try await post(path: "/api/livechat/v1/init", body: body.compactMapValues { $0 }, token: oldVisitorToken)
     }
 
@@ -1233,6 +1240,8 @@ private func mapBackendError(status: Int, code: String?) -> HermesLiveChatError 
     case "70011", "LC_CHANNEL_DISABLED": return .channelDisabled
     case "70012", "LC_DOMAIN_NOT_ALLOWED": return .domainNotAllowed
     case "70010", "LC_ORG_LIVECHAT_DISABLED": return .orgDisabled
+    case "70006", "LC_APP_INIT_TOKEN_INVALID": return .appInitTokenInvalid
+    case "70007", "LC_APP_INIT_TOKEN_EXPIRED": return .appInitTokenExpired
     case "LC_REALTIME_CONNECT_UNAUTHORIZED": return .realtimeConnectUnauthorized
     case "70050", "LC_REALTIME_PROVIDER_UNAVAILABLE": return .realtimeProviderUnavailable
     default:

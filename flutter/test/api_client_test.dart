@@ -19,10 +19,8 @@ void main() {
         seen = request;
         return http.Response(
           jsonEncode({
-            'channel_type': 'app',
-            'channel_ref': 'app_xxx',
-            'config': {'welcome': '您好'},
-            'config_exp': 1778669400,
+            'welcome': '您好',
+            'close': '再见',
           }),
           200,
           headers: {'content-type': 'application/json'},
@@ -37,7 +35,7 @@ void main() {
       expect(seen.url.queryParameters['channel_type'], 'app');
       expect(seen.url.queryParameters['app_key'], 'app_xxx');
       expect(seen.url.queryParameters['locale'], 'zh-CN');
-      expect((json['config'] as Map)['welcome'], '您好');
+      expect(json['welcome'], '您好');
     });
   });
 
@@ -61,7 +59,11 @@ void main() {
 
       final api = ApiClient(_config(), httpClient: mock);
       final json = await api.init(
-        identity: const VisitorIdentity(customerId: 'cust_1', name: 'Alice'),
+        identity: const VisitorIdentity(
+          customerId: 'cust_1',
+          name: 'Alice',
+          identityToken: 'identity.jwt',
+        ),
       );
 
       expect(seen.method, 'POST');
@@ -71,6 +73,7 @@ void main() {
       expect(body['channel_type'], 'app');
       expect(body['app_key'], 'app_xxx');
       expect(body['customer_id'], 'cust_1');
+      expect(body['identity_token'], 'identity.jwt');
       expect((body['user'] as Map)['name'], 'Alice');
       expect(json['visitor_id'], 'v_1');
     });

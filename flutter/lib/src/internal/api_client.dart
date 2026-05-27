@@ -56,6 +56,8 @@ class ApiClient {
         },
         if (identity.locale != null) 'locale': identity.locale,
         if (identity.attrs != null) 'attrs': identity.attrs,
+        if (identity.identityToken != null)
+          'identity_token': identity.identityToken,
       },
       bearerToken: oldVisitorToken,
     );

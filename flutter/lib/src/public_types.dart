@@ -20,6 +20,7 @@ class VisitorIdentity {
     this.avatar,
     this.locale,
     this.attrs,
+    this.identityToken,
   });
 
   final String? customerId;
@@ -32,6 +33,7 @@ class VisitorIdentity {
   final String? avatar;
   final String? locale;
   final Map<String, Object?>? attrs;
+  final String? identityToken;
 }
 
 /// Snapshot returned by [HermesLiveChat.startSession].

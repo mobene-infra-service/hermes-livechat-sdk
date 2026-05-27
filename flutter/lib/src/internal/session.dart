@@ -58,6 +58,9 @@ class Session {
 
   Future<String> prefetchWelcome({String? locale}) async {
     final json = await api.publicConfig(locale: locale);
+    if (json['welcome'] is String) {
+      return json['welcome'] as String;
+    }
     final cfg = json['config'];
     if (cfg is Map && cfg['welcome'] is String) {
       return cfg['welcome'] as String;

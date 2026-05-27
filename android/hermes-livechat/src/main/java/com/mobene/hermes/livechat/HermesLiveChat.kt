@@ -58,6 +58,7 @@ data class VisitorIdentity(
     val avatar: String? = null,
     val locale: String? = null,
     val attrs: Map<String, Any?>? = null,
+    val identityToken: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         putOpt("customer_id", customerId)
@@ -69,6 +70,7 @@ data class VisitorIdentity(
         putOpt("name", name)
         putOpt("avatar", avatar)
         putOpt("locale", locale)
+        putOpt("identity_token", identityToken)
         if (attrs != null) put("attrs", JSONObject(attrs))
     }
 
@@ -87,6 +89,7 @@ data class VisitorIdentity(
                 avatar = json.optStringOrNull("avatar"),
                 locale = json.optStringOrNull("locale"),
                 attrs = attrs,
+                identityToken = json.optStringOrNull("identity_token"),
             )
         }
     }
@@ -117,6 +120,8 @@ enum class HermesLiveChatError {
     CHANNEL_DISABLED,
     DOMAIN_NOT_ALLOWED,
     ORG_DISABLED,
+    APP_INIT_TOKEN_INVALID,
+    APP_INIT_TOKEN_EXPIRED,
     REALTIME_CONNECT_UNAUTHORIZED,
     REALTIME_PROVIDER_UNAVAILABLE,
     UNKNOWN,
@@ -257,6 +262,7 @@ object HermesLiveChat {
 
     suspend fun prefetchWelcome(locale: String? = null): String {
         val json = requireApi().publicConfig(locale)
+        json.optString("welcome").takeIf { it.isNotEmpty() }?.let { return it }
         val cfg = json.optJSONObject("config")
         return cfg?.optString("welcome").orEmpty()
     }
@@ -637,6 +643,7 @@ private class ApiClient(private val config: HermesLiveChatConfig) {
             putOpt("number", identity.number)
             put("user", user)
             putOpt("locale", identity.locale)
+            putOpt("identity_token", identity.identityToken)
             if (identity.attrs != null) put("attrs", JSONObject(identity.attrs))
         }
         return post("/api/livechat/v1/init", body, oldToken)
@@ -974,6 +981,8 @@ private fun mapBackendError(status: Int, code: String?): HermesLiveChatError = w
     "70011", "LC_CHANNEL_DISABLED" -> HermesLiveChatError.CHANNEL_DISABLED
     "70012", "LC_DOMAIN_NOT_ALLOWED" -> HermesLiveChatError.DOMAIN_NOT_ALLOWED
     "70010", "LC_ORG_LIVECHAT_DISABLED" -> HermesLiveChatError.ORG_DISABLED
+    "70006", "LC_APP_INIT_TOKEN_INVALID" -> HermesLiveChatError.APP_INIT_TOKEN_INVALID
+    "70007", "LC_APP_INIT_TOKEN_EXPIRED" -> HermesLiveChatError.APP_INIT_TOKEN_EXPIRED
     "LC_REALTIME_CONNECT_UNAUTHORIZED" -> HermesLiveChatError.REALTIME_CONNECT_UNAUTHORIZED
     "70050", "LC_REALTIME_PROVIDER_UNAVAILABLE" -> HermesLiveChatError.REALTIME_PROVIDER_UNAVAILABLE
     else -> when {

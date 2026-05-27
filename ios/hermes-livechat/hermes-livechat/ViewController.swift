@@ -1,3 +1,4 @@
+import CryptoKit
 import HermesLiveChat
 import UIKit
 
@@ -5,6 +6,7 @@ final class ViewController: UIViewController {
     private let baseUrlInput = UITextField()
     private let realtimeUrlInput = UITextField()
     private let appKeyInput = UITextField()
+    private let secretInput = UITextField()
     private let customerIdInput = UITextField()
 
     override func viewDidLoad() {
@@ -35,24 +37,23 @@ final class ViewController: UIViewController {
         configureField(baseUrlInput, placeholder: "baseUrl", value: SampleConfig.defaultBaseUrl)
         configureField(realtimeUrlInput, placeholder: "realtimeUrl（留空由 SDK 从 baseUrl 自动推导）", value: SampleConfig.defaultRealtimeUrl)
         configureField(appKeyInput, placeholder: "appKey", value: SampleConfig.defaultAppKey)
+        configureField(secretInput, placeholder: "secretKey（仅调试签 identity_token）", value: SampleConfig.defaultSecretKey)
         configureField(customerIdInput, placeholder: "customerId", value: SampleConfig.defaultCustomerId)
 
         stack.addArrangedSubview(baseUrlInput)
         stack.addArrangedSubview(realtimeUrlInput)
         stack.addArrangedSubview(appKeyInput)
+        stack.addArrangedSubview(secretInput)
         stack.addArrangedSubview(customerIdInput)
 
-        var openConfig = UIButton.Configuration.filled()
-        openConfig.title = "打开客服"
-        openConfig.baseBackgroundColor = .systemBlue
-        openConfig.baseForegroundColor = .white
-        openConfig.cornerStyle = .medium
-        openConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16)
-        let openButton = UIButton(
-            configuration: openConfig,
-            primaryAction: UIAction { [weak self] _ in self?.openLiveChat() }
-        )
+        let openButton = UIButton(type: .system)
+        openButton.setTitle("打开客服", for: .normal)
+        openButton.setTitleColor(.white, for: .normal)
+        openButton.backgroundColor = .systemBlue
+        openButton.layer.cornerRadius = 8
+        openButton.contentEdgeInsets = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
         openButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+        openButton.addTarget(self, action: #selector(openLiveChatButtonTapped), for: .touchUpInside)
         stack.addArrangedSubview(openButton)
 
         NSLayoutConstraint.activate([
@@ -87,6 +88,7 @@ final class ViewController: UIViewController {
         let baseUrl = baseUrlInput.trimmedText.trimmingTrailingSlash()
         let realtimeUrl = realtimeUrlInput.trimmedText
         let appKey = appKeyInput.trimmedText
+        let secret = secretInput.trimmedText
         let customerId = customerIdInput.trimmedText.isEmpty
             ? SampleConfig.defaultCustomerId
             : customerIdInput.trimmedText
@@ -118,17 +120,32 @@ final class ViewController: UIViewController {
             )
         )
 
+        let identityToken: String?
+        do {
+            identityToken = secret.isEmpty
+                ? nil
+                : try makeIdentityToken(secret: secret, appKey: appKey, customerId: customerId, name: "iOS Test")
+        } catch {
+            showError("identity_token 生成失败：\(error.localizedDescription)")
+            return
+        }
+
         HermesLiveChatLauncher.present(
             from: self,
             identity: VisitorIdentity(
                 customerId: customerId,
                 name: "iOS Test",
-                locale: "zh-CN"
+                locale: "zh-CN",
+                identityToken: identityToken
             ),
             title: "在线客服",
             locale: "zh-CN",
             startSessionOnOpen: true
         )
+    }
+
+    @objc private func openLiveChatButtonTapped() {
+        openLiveChat()
     }
 
     private func parseHTTPURL(_ raw: String) -> URL? {
@@ -155,6 +172,39 @@ final class ViewController: UIViewController {
         let alert = UIAlertController(title: "配置错误", message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "确定", style: .default))
         present(alert, animated: true)
+    }
+
+    private func makeIdentityToken(secret: String, appKey: String, customerId: String, name: String) throws -> String {
+        let now = Int(Date().timeIntervalSince1970)
+        let header: [String: Any] = ["alg": "HS256", "typ": "JWT"]
+        let payload: [String: Any] = [
+            "aud": "livechat:init",
+            "app_key": appKey,
+            "sub": customerId,
+            "customer_id": customerId,
+            "name": name,
+            "locale": "zh-CN",
+            "iat": now,
+            "exp": now + 5 * 60,
+        ]
+        let signingInput = [
+            try base64URLJSON(header),
+            try base64URLJSON(payload),
+        ].joined(separator: ".")
+        let key = SymmetricKey(data: Data(secret.utf8))
+        let signature = HMAC<SHA256>.authenticationCode(for: Data(signingInput.utf8), using: key)
+        return "\(signingInput).\(base64URLEncoded(Data(signature)))"
+    }
+
+    private func base64URLJSON(_ value: [String: Any]) throws -> String {
+        base64URLEncoded(try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]))
+    }
+
+    private func base64URLEncoded(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }
 

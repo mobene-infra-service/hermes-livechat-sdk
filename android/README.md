@@ -30,7 +30,9 @@ Hermes LiveChat Android SDK 用于原生 Android App 内接入在线客服。提
 | `realtimeUrl` | `wss://chat.example.com/connection/websocket` | 可选；不传时 SDK 从 `baseUrl` 自动推导 |
 | `customerId` | `u_8f3a...` | 可选；业务侧稳定、不可枚举的用户标识 |
 
-SDK 不需要客户 App Backend 签 token，不需要 App secret，也不需要 `X-Arke-Service-Token`。`Secret Key` 不能放进 Android App。
+默认 `is_auth=0` 时，SDK 不需要客户 App Backend 签 token，不需要 App secret，也不需要 `X-Arke-Service-Token`。`Secret Key` 不能放进 Android App。
+
+如果管理端把 App 渠道配置为 `is_auth=1`，客户 App Backend 必须用该 App 的 `Secret Key` 签发短期 HS256 `identity_token`，Android App 再通过 `VisitorIdentity(identityToken = ...)` 传给 SDK。
 
 后台必须为这个 `appKey` 绑定并启用接待方案：
 
@@ -353,6 +355,7 @@ VisitorIdentity(
 | `businessId` / `ticketId` | 可选；用于业务上下文绑定 |
 | `number` | 可选；业务号码或外部渠道号码 |
 | `name` / `email` / `avatar` | 展示和客服识别用，不参与强认证 |
+| `identityToken` | `is_auth=1` 时必填，由客户 App Backend 用 App `Secret Key` 签发 |
 | `attrs` | 业务扩展信息，例如会员等级、App 版本、订单上下文 |
 
 注意：
@@ -360,7 +363,24 @@ VisitorIdentity(
 - `customerId` 是客户端声明字段，只能做弱绑定，不能当登录态认证结果。
 - 不要传自增 ID、手机号、邮箱等可猜测或敏感值。
 - 建议传稳定、不可枚举的业务用户 ID，或服务端生成的哈希 ID。
-- 如需要身份防伪造，请接入服务端签名身份模式。
+- 如需要身份防伪造，请在管理端开启 `is_auth=1`，并接入服务端签名身份模式。
+
+`identity_token` 使用 HS256 JWT，推荐 claims：
+
+```jsonc
+{
+  "aud": "livechat:init",
+  "app_key": "<app_key>",
+  "sub": "<stable_user_id>",
+  "customer_id": "<stable_user_id>",
+  "name": "Alice",
+  "email": "alice@example.com",
+  "iat": 1778668800,
+  "exp": 1778669100
+}
+```
+
+`exp` 必填，建议有效期 5 分钟内；`app_key` 如存在必须与当前 App 渠道一致。
 
 ## API 接口速查
 

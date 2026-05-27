@@ -10,10 +10,13 @@
 |---|---|---|
 | `baseUrl` | `https://hermes-test.financifyx.com/api` | 是 |
 | `realtimeUrl` | `wss://hermes-test.financifyx.com/api/connection/websocket` | 否，留空时 SDK 从 `baseUrl` 自动推导 |
-| `appKey` | `019e5ed46ccb74cf885dd5bbecf3bde7` | 是 |
+| `appKey` | `app_019e5ed46ccb74cf885dd5bbecf3bde7` | 是 |
+| `secretKey` | `sk_Gizb1OlpD653G-Dbsp6A8K0D4NGrY3p7vpcSvxScFd0` | 否，仅用于 sample 本地签 `identity_token` |
 | `customerId` | `android-test-user` | 否 |
 
 首屏可以手动修改这些参数。点击“打开客服”后，sample app 会初始化 `HermesLiveChat` 并打开默认聊天页。
+
+`secretKey` 只用于验证管理端 `is_auth=1` 的签名模式，正式 App 不应内置 Secret Key；生产接入应由客户 App Backend 生成短期 `identity_token` 后传给 SDK。
 
 `baseUrl` 是 livechat 公网根挂载点，可以带网关子路径前缀（例如 `https://hermes-test.financifyx.com/api`，由 hermes-gateway 在该子路径下挂载 livechat 服务）。SDK 内部会在 `baseUrl` 后再拼 `/api/livechat/v1/...`，请不要将 `baseUrl` 写到 `/api/livechat/v1` 这一层。
 
