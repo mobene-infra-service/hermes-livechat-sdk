@@ -100,7 +100,8 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
 
   @override
   void dispose() {
-    _events?.cancel();
+    unawaited(_events?.cancel());
+    unawaited(_client.disconnect());
     _input.dispose();
     _scroll.dispose();
     super.dispose();

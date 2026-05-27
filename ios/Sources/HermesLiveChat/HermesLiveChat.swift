@@ -907,6 +907,14 @@ public final class HermesLiveChatViewController: UIViewController {
         }
     }
 
+    public override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true {
+            eventsTask?.cancel()
+            HermesLiveChat.shared.disconnect()
+        }
+    }
+
     deinit {
         eventsTask?.cancel()
         keyboardObservers.forEach(NotificationCenter.default.removeObserver)

@@ -65,6 +65,9 @@ class HermesLiveChatActivity : Activity() {
 
     override fun onDestroy() {
         eventsJob?.cancel()
+        if (isFinishing && !isChangingConfigurations) {
+            HermesLiveChat.disconnect()
+        }
         scope.cancel()
         super.onDestroy()
     }
