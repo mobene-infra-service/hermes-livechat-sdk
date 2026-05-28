@@ -934,7 +934,6 @@ public final class HermesLiveChatViewController: UIViewController {
         super.viewDidDisappear(animated)
         if isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true {
             eventsTask?.cancel()
-            HermesLiveChat.shared.disconnect()
         }
     }
 

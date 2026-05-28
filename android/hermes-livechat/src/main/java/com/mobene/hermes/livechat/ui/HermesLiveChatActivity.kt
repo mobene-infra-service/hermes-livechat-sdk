@@ -57,6 +57,7 @@ class HermesLiveChatActivity : Activity() {
         configureWindow()
         buildUi()
         subscribeEvents()
+        status.text = HermesLiveChat.connectionState.label()
         if (intent.getBooleanExtra(EXTRA_START_ON_OPEN, false)) {
             bootstrapSessionAndWelcome()
         } else {
@@ -66,9 +67,6 @@ class HermesLiveChatActivity : Activity() {
 
     override fun onDestroy() {
         eventsJob?.cancel()
-        if (isFinishing && !isChangingConfigurations) {
-            HermesLiveChat.disconnect()
-        }
         scope.cancel()
         super.onDestroy()
     }

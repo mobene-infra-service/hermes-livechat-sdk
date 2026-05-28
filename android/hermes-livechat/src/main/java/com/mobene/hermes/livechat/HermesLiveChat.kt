@@ -249,6 +249,9 @@ object HermesLiveChat {
     var currentConversationId: String? = null
         private set
 
+    val connectionState: LiveChatConnectionState
+        get() = realtimeState
+
     fun configure(context: Context, config: HermesLiveChatConfig) {
         disconnectRealtime()
         this.config = config
