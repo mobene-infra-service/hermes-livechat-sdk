@@ -307,8 +307,8 @@ class HermesLiveChatActivity : Activity() {
                 if (!started) {
                     startSessionAndLoadHistory()
                 }
-                HermesLiveChat.sendText(text)
-            }.onSuccess(::addMessage).onFailure {
+                HermesLiveChat.sendTextMessages(text)
+            }.onSuccess { it.forEach(::addMessage) }.onFailure {
                 input.setText(text)
                 addSystemMessage(it.message ?: "发送失败")
             }

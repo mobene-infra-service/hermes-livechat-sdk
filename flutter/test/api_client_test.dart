@@ -132,12 +132,13 @@ void main() {
       });
 
       final api = ApiClient(_config(), httpClient: mock);
-      final msg = await api.sendText(
+      final result = await api.sendText(
         visitorToken: 'visitor_token_value',
         conversationId: 'conv_1',
         text: 'hello',
         clientMsgId: 'c_abc',
       );
+      final msg = result.message;
       expect(msg.uuid, 'msg_1');
       expect(msg.contentType, 'text');
       expect(msg.content['text'], 'hello');

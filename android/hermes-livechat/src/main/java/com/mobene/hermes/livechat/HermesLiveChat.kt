@@ -192,6 +192,22 @@ data class Message(
     }
 }
 
+data class SendMessageResult(
+    val conversation: Conversation?,
+    val message: Message,
+    val messages: List<Message>,
+) {
+    companion object {
+        fun fromJson(json: JSONObject): SendMessageResult {
+            val conversation = json.optJSONObject("conversation")?.let { Conversation.fromJson(it) }
+            val message = Message.fromJson(messageEnvelope(json))
+            val items = json.optJSONArray("messages") ?: JSONArray()
+            val messages = (0 until items.length()).map { Message.fromJson(items.getJSONObject(it)) }
+            return SendMessageResult(conversation, message, messages.ifEmpty { listOf(message) })
+        }
+    }
+}
+
 data class ConversationEvent(
     val eventType: String,
     val createdAt: Long,
@@ -294,16 +310,19 @@ object HermesLiveChat {
         return VisitorSession(next.visitorId, next.contactId, next.tokenExp, realtimeUrl)
     }
 
-    suspend fun sendText(text: String, conversationId: String? = null): Message {
-        var token = validToken()
+    suspend fun sendText(text: String, conversationId: String? = null): Message =
+        sendTextResult(text, conversationId).message
+
+    suspend fun sendTextMessages(text: String, conversationId: String? = null): List<Message> =
+        sendTextResult(text, conversationId).messages
+
+    private suspend fun sendTextResult(text: String, conversationId: String? = null): SendMessageResult {
+        val token = validToken()
         val clientMsgId = newClientMsgId()
         val implicitConversation = conversationId == null
-        if (implicitConversation && currentConversationId.isNullOrEmpty()) {
-            token = ensureActiveConversation(token)
-        }
         ensureRealtimeConnected(token)
         val convId = conversationId ?: currentConversationId
-        val message = try {
+        val result = try {
             requireApi().sendText(
                 token = token,
                 conversationId = convId,
@@ -322,11 +341,7 @@ object HermesLiveChat {
                 clientMsgId = clientMsgId,
             )
         }
-        rememberConversation(message.conversationId)
-        rememberSeen(message.uuid)
-        rememberSeen(message.clientMsgId)
-        touchRealtimeActivity()
-        return message
+        return handleSendResult(result)
     }
 
     suspend fun sendImage(
@@ -334,8 +349,22 @@ object HermesLiveChat {
         mimeType: String,
         filename: String? = null,
         conversationId: String? = null,
-    ): Message {
-        var token = validToken()
+    ): Message = sendImageResult(bytes, mimeType, filename, conversationId).message
+
+    suspend fun sendImageMessages(
+        bytes: ByteArray,
+        mimeType: String,
+        filename: String? = null,
+        conversationId: String? = null,
+    ): List<Message> = sendImageResult(bytes, mimeType, filename, conversationId).messages
+
+    private suspend fun sendImageResult(
+        bytes: ByteArray,
+        mimeType: String,
+        filename: String? = null,
+        conversationId: String? = null,
+    ): SendMessageResult {
+        val token = validToken()
         val presign = requireApi().presign(token, filename ?: defaultImageFilename(mimeType), mimeType, bytes.size)
         requireApi().uploadPresigned(
             url = presign.getString("upload_url"),
@@ -348,12 +377,9 @@ object HermesLiveChat {
         val url = presign.getString("download_url")
         val clientMsgId = newClientMsgId()
         val implicitConversation = conversationId == null
-        if (implicitConversation && currentConversationId.isNullOrEmpty()) {
-            token = ensureActiveConversation(token)
-        }
         ensureRealtimeConnected(token)
         val convId = conversationId ?: currentConversationId
-        val message = try {
+        val result = try {
             requireApi().sendImage(
                 token = token,
                 conversationId = convId,
@@ -378,11 +404,7 @@ object HermesLiveChat {
                 clientMsgId = clientMsgId,
             )
         }
-        rememberConversation(message.conversationId)
-        rememberSeen(message.uuid)
-        rememberSeen(message.clientMsgId)
-        touchRealtimeActivity()
-        return message
+        return handleSendResult(result)
     }
 
     suspend fun markRead(conversationId: String, messageId: String) {
@@ -402,6 +424,26 @@ object HermesLiveChat {
                 .thenBy { messageSortRank(it) }
                 .thenBy { it.uuid },
         )
+    }
+
+    private fun handleSendResult(result: SendMessageResult): SendMessageResult {
+        val conversation = result.conversation
+        if (conversation != null) {
+            rememberConversation(conversation.uuid)
+        }
+        for (message in result.messages) {
+            rememberSeen(message.uuid)
+            rememberSeen(message.clientMsgId)
+            if (message.uuid == result.message.uuid || message.clientMsgId == result.message.clientMsgId) continue
+            if (conversation != null) {
+                _events.tryEmit(HermesLiveChatEvent.MessageReceived(message, conversation))
+            }
+        }
+        rememberConversation(result.message.conversationId)
+        rememberSeen(result.message.uuid)
+        rememberSeen(result.message.clientMsgId)
+        touchRealtimeActivity()
+        return result
     }
 
     private fun messageSortRank(message: Message): Int = when (message.contentType) {
@@ -490,29 +532,6 @@ object HermesLiveChat {
                 .firstOrNull { it.status != "closed" }
                 ?.let { rememberConversation(it.uuid) }
         }
-    }
-
-    private suspend fun ensureActiveConversation(token: String): String {
-        refreshCurrentConversation(token)
-        if (!currentConversationId.isNullOrEmpty()) return token
-        val cfg = requireConfig()
-        val session = stored ?: store?.load(cfg.appKey) ?: return token
-        val json = requireApi().init(VisitorIdentity(), token)
-        val realtimeUrl = json.optJSONObject("realtime")?.optString("url")?.takeIf { it.isNotEmpty() }
-            ?: session.realtimeUrl
-            ?: cfg.realtimeUrl
-        val next = session.copy(
-            visitorId = json.getString("visitor_id"),
-            contactId = json.getLong("contact_id"),
-            token = json.getString("token"),
-            tokenExp = json.getLong("token_exp"),
-            realtimeUrl = realtimeUrl,
-        )
-        stored = next
-        store?.save(next)
-        refreshCurrentConversation(next.token)
-        connectRealtime(realtimeUrl, next.token)
-        return next.token
     }
 
     private fun ensureRealtimeConnected(token: String) {
@@ -662,14 +681,14 @@ private class ApiClient(private val config: HermesLiveChatConfig) {
         return post("/api/livechat/v1/init", body, oldToken)
     }
 
-    suspend fun sendText(token: String, conversationId: String?, text: String, clientMsgId: String): Message {
+    suspend fun sendText(token: String, conversationId: String?, text: String, clientMsgId: String): SendMessageResult {
         val body = JSONObject().apply {
             putOpt("conversation_id", conversationId)
             put("client_msg_id", clientMsgId)
             put("content_type", "text")
             put("content", JSONObject(mapOf("text" to text)))
         }
-        return Message.fromJson(messageEnvelope(post("/api/livechat/v1/messages", body, token)))
+        return SendMessageResult.fromJson(post("/api/livechat/v1/messages", body, token))
     }
 
     suspend fun sendImage(
@@ -680,14 +699,14 @@ private class ApiClient(private val config: HermesLiveChatConfig) {
         mimeType: String,
         size: Int,
         clientMsgId: String,
-    ): Message {
+    ): SendMessageResult {
         val body = JSONObject().apply {
             putOpt("conversation_id", conversationId)
             put("client_msg_id", clientMsgId)
             put("content_type", "image")
             put("content", JSONObject(mapOf("key" to key, "url" to url, "mime" to mimeType, "size" to size)))
         }
-        return Message.fromJson(messageEnvelope(post("/api/livechat/v1/messages", body, token)))
+        return SendMessageResult.fromJson(post("/api/livechat/v1/messages", body, token))
     }
 
     suspend fun markRead(token: String, messageId: String) {
@@ -784,7 +803,6 @@ private class ApiClient(private val config: HermesLiveChatConfig) {
         return this
     }
 
-    private fun messageEnvelope(json: JSONObject): JSONObject = json.optJSONObject("message") ?: json
 }
 
 private class CentrifugeRealtime(
@@ -960,6 +978,8 @@ private fun imageExtension(mimeType: String): String = when (mimeType.lowercase(
 }
 
 private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
+
+private fun messageEnvelope(json: JSONObject): JSONObject = json.optJSONObject("message") ?: json
 
 private fun JSONObject.optStringOrNull(name: String): String? {
     if (!has(name) || isNull(name)) return null

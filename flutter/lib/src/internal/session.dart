@@ -109,12 +109,25 @@ class Session {
   }
 
   Future<Message> sendText(String text, {String? conversationId}) async {
-    var token = await _validToken();
+    final result = await _sendTextResult(text, conversationId: conversationId);
+    return result.message;
+  }
+
+  Future<List<Message>> sendTextMessages(
+    String text, {
+    String? conversationId,
+  }) async {
+    final result = await _sendTextResult(text, conversationId: conversationId);
+    return result.messages;
+  }
+
+  Future<SendMessageResult> _sendTextResult(
+    String text, {
+    String? conversationId,
+  }) async {
+    final token = await _validToken();
     final clientMsgId = newClientMsgId();
     final implicitConversation = conversationId == null;
-    if (implicitConversation && _currentConversationId == null) {
-      token = await _ensureActiveConversation(token);
-    }
     await _ensureRealtimeConnected(token);
     final convId = conversationId ?? _currentConversationId;
     try {
@@ -135,7 +148,37 @@ class Session {
     String? filename,
     String? conversationId,
   }) async {
-    var token = await _validToken();
+    final result = await _sendImageResult(
+      bytes: bytes,
+      mimeType: mimeType,
+      filename: filename,
+      conversationId: conversationId,
+    );
+    return result.message;
+  }
+
+  Future<List<Message>> sendImageMessages({
+    required List<int> bytes,
+    required String mimeType,
+    String? filename,
+    String? conversationId,
+  }) async {
+    final result = await _sendImageResult(
+      bytes: bytes,
+      mimeType: mimeType,
+      filename: filename,
+      conversationId: conversationId,
+    );
+    return result.messages;
+  }
+
+  Future<SendMessageResult> _sendImageResult({
+    required List<int> bytes,
+    required String mimeType,
+    String? filename,
+    String? conversationId,
+  }) async {
+    final token = await _validToken();
     final presign = await api.presignAttachment(
       visitorToken: token,
       filename: filename ?? defaultImageFilename(mimeType),
@@ -157,9 +200,6 @@ class Session {
     );
     final clientMsgId = newClientMsgId();
     final implicitConversation = conversationId == null;
-    if (implicitConversation && _currentConversationId == null) {
-      token = await _ensureActiveConversation(token);
-    }
     await _ensureRealtimeConnected(token);
     final convId = conversationId ?? _currentConversationId;
     try {
@@ -382,64 +422,27 @@ class Session {
     }
   }
 
-  Future<String> _ensureActiveConversation(String token) async {
-    await _refreshCurrentConversation(token);
-    if (_currentConversationId != null) return token;
-    final stored = _stored;
-    if (stored == null) return token;
-    final json = await api.init(
-      identity: const VisitorIdentity(),
-      oldVisitorToken: token,
-    );
-    final nextToken = json['token'] as String? ?? stored.token;
-    final realtime = json['realtime'];
-    final realtimeUrl = (realtime is Map && realtime['url'] is String)
-        ? realtime['url'] as String
-        : stored.realtimeUrl ?? config.realtimeUrl;
-    _stored = StoredSession(
-      appKey: stored.appKey,
-      visitorId: json['visitor_id'] as String? ?? stored.visitorId,
-      contactId: json['contact_id'] is num
-          ? (json['contact_id'] as num).toInt()
-          : stored.contactId,
-      token: nextToken,
-      tokenExp: json['token_exp'] is num
-          ? (json['token_exp'] as num).toInt()
-          : stored.tokenExp,
-      realtimeUrl: realtimeUrl,
-      lastConversationId: stored.lastConversationId,
-    );
-    await store.save(_stored!);
-    await _refreshCurrentConversation(nextToken);
-    await _connectTransport(realtimeUrl, nextToken);
-    return nextToken;
-  }
-
   bool _isExpired(int exp) {
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     return exp - now <= config.refreshLeewaySeconds;
   }
 
-  Future<Message> _sendText(
+  Future<SendMessageResult> _sendText(
     String token,
     String? conversationId,
     String text,
     String clientMsgId,
   ) async {
-    final msg = await api.sendText(
+    final result = await api.sendText(
       visitorToken: token,
       conversationId: conversationId,
       text: text,
       clientMsgId: clientMsgId,
     );
-    _dedup.add(msg.clientMsgId);
-    _dedup.add(msg.uuid);
-    _rememberConversation(msg.conversationId);
-    _touchRealtimeActivity();
-    return msg;
+    return _handleSendResult(result);
   }
 
-  Future<Message> _sendImage({
+  Future<SendMessageResult> _sendImage({
     required String token,
     required String? conversationId,
     required String key,
@@ -448,7 +451,7 @@ class Session {
     required int size,
     required String clientMsgId,
   }) async {
-    final msg = await api.sendImage(
+    final result = await api.sendImage(
       visitorToken: token,
       conversationId: conversationId,
       key: key,
@@ -457,11 +460,31 @@ class Session {
       size: size,
       clientMsgId: clientMsgId,
     );
-    _dedup.add(msg.uuid);
-    _dedup.add(msg.clientMsgId);
-    _rememberConversation(msg.conversationId);
+    return _handleSendResult(result);
+  }
+
+  SendMessageResult _handleSendResult(SendMessageResult result) {
+    final conversation = result.conversation;
+    if (conversation != null) {
+      _rememberConversation(conversation.uuid);
+    }
+    for (final message in result.messages) {
+      _dedup.add(message.uuid);
+      _dedup.add(message.clientMsgId);
+      if (message.uuid == result.message.uuid ||
+          message.clientMsgId == result.message.clientMsgId) {
+        continue;
+      }
+      if (conversation != null) {
+        _events
+            .add(MessageReceived(message: message, conversation: conversation));
+      }
+    }
+    _dedup.add(result.message.uuid);
+    _dedup.add(result.message.clientMsgId);
+    _rememberConversation(result.message.conversationId);
     _touchRealtimeActivity();
-    return msg;
+    return result;
   }
 
   void _touchRealtimeActivity() {

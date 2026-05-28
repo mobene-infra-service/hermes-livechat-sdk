@@ -90,6 +90,36 @@ class Message {
   }
 }
 
+class SendMessageResult {
+  const SendMessageResult({
+    required this.message,
+    required this.messages,
+    this.conversation,
+  });
+
+  final Conversation? conversation;
+  final Message message;
+  final List<Message> messages;
+
+  factory SendMessageResult.fromJson(Map<String, Object?> json) {
+    final conversationJson = json['conversation'];
+    final message = Message.fromJson(_messageEnvelope(json));
+    final items = json['messages'] is List
+        ? (json['messages'] as List)
+            .whereType<Map>()
+            .map((item) => Message.fromJson(Map<String, Object?>.from(item)))
+            .toList()
+        : <Message>[];
+    return SendMessageResult(
+      conversation: conversationJson is Map
+          ? Conversation.fromJson(Map<String, Object?>.from(conversationJson))
+          : null,
+      message: message,
+      messages: items.isEmpty ? [message] : items,
+    );
+  }
+}
+
 class ConversationEvent {
   const ConversationEvent({
     required this.eventType,
@@ -199,4 +229,10 @@ int? _asInt(Object? value) {
   if (value is num) return value.toInt();
   if (value is String) return int.tryParse(value);
   return null;
+}
+
+Map<String, Object?> _messageEnvelope(Map<String, Object?> json) {
+  final inner = json['message'];
+  if (inner is Map) return Map<String, Object?>.from(inner);
+  return json;
 }

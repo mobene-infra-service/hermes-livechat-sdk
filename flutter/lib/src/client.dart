@@ -42,6 +42,12 @@ class HermesLiveChat {
   Future<Message> sendText(String text, {String? conversationId}) =>
       _require().sendText(text, conversationId: conversationId);
 
+  Future<List<Message>> sendTextMessages(
+    String text, {
+    String? conversationId,
+  }) =>
+      _require().sendTextMessages(text, conversationId: conversationId);
+
   Future<Message> sendImage({
     required List<int> bytes,
     required String mimeType,
@@ -49,6 +55,19 @@ class HermesLiveChat {
     String? conversationId,
   }) =>
       _require().sendImage(
+        bytes: bytes,
+        mimeType: mimeType,
+        filename: filename,
+        conversationId: conversationId,
+      );
+
+  Future<List<Message>> sendImageMessages({
+    required List<int> bytes,
+    required String mimeType,
+    String? filename,
+    String? conversationId,
+  }) =>
+      _require().sendImageMessages(
         bytes: bytes,
         mimeType: mimeType,
         filename: filename,

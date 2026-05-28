@@ -193,9 +193,9 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
         if (mounted) _input.text = text;
         return;
       }
-      final message = await _client.sendText(text);
+      final messages = await _client.sendTextMessages(text);
       if (!mounted) return;
-      _mergeMessages([message]);
+      _mergeMessages(messages);
     } on HermesLiveChatException catch (error) {
       if (mounted) _input.text = text;
       _handleError(error);

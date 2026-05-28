@@ -146,6 +146,23 @@ public struct Message: Identifiable {
     }
 }
 
+struct SendMessageResult {
+    let conversation: Conversation?
+    let message: Message
+    let messages: [Message]
+
+    static func from(_ json: [String: Any]) -> SendMessageResult {
+        let conversation = (json["conversation"] as? [String: Any]).map(Conversation.from)
+        let message = Message.from(messageEnvelope(json))
+        let messages = (json["messages"] as? [[String: Any]] ?? []).map(Message.from)
+        return SendMessageResult(
+            conversation: conversation,
+            message: message,
+            messages: messages.isEmpty ? [message] : messages
+        )
+    }
+}
+
 public enum HermesLiveChatEvent {
     case connectionStateChanged(LiveChatConnectionState)
     case messageReceived(Message, Conversation)
@@ -233,17 +250,22 @@ public final class HermesLiveChat {
     }
 
     public func sendText(_ text: String, conversationId: String? = nil) async throws -> Message {
-        var token = try await validToken()
+        try await sendTextResult(text, conversationId: conversationId).message
+    }
+
+    public func sendTextMessages(_ text: String, conversationId: String? = nil) async throws -> [Message] {
+        try await sendTextResult(text, conversationId: conversationId).messages
+    }
+
+    private func sendTextResult(_ text: String, conversationId: String? = nil) async throws -> SendMessageResult {
+        let token = try await validToken()
         let clientMsgId = newClientMsgId()
         let implicitConversation = conversationId == nil
-        if implicitConversation && currentConversationId == nil {
-            token = try await ensureActiveConversation(token: token)
-        }
         try ensureRealtimeConnected(token: token)
         let convId = conversationId ?? currentConversationId
-        let message: Message
+        let result: SendMessageResult
         do {
-            message = try await requireApi().sendText(
+            result = try await requireApi().sendText(
                 token: token,
                 conversationId: convId,
                 text: text,
@@ -251,18 +273,14 @@ public final class HermesLiveChat {
             )
         } catch let error as HermesLiveChatException where implicitConversation && error.error == .conversationClosed {
             forgetCurrentConversation(convId)
-            message = try await requireApi().sendText(
+            result = try await requireApi().sendText(
                 token: token,
                 conversationId: nil,
                 text: text,
                 clientMsgId: clientMsgId
             )
         }
-        rememberConversation(message.conversationId)
-        _ = rememberSeen(message.uuid)
-        _ = rememberSeen(message.clientMsgId)
-        touchRealtimeActivity()
-        return message
+        return handleSendResult(result)
     }
 
     public func sendImage(
@@ -271,7 +289,25 @@ public final class HermesLiveChat {
         filename: String? = nil,
         conversationId: String? = nil
     ) async throws -> Message {
-        var token = try await validToken()
+        try await sendImageResult(data: data, mimeType: mimeType, filename: filename, conversationId: conversationId).message
+    }
+
+    public func sendImageMessages(
+        data: Data,
+        mimeType: String,
+        filename: String? = nil,
+        conversationId: String? = nil
+    ) async throws -> [Message] {
+        try await sendImageResult(data: data, mimeType: mimeType, filename: filename, conversationId: conversationId).messages
+    }
+
+    private func sendImageResult(
+        data: Data,
+        mimeType: String,
+        filename: String? = nil,
+        conversationId: String? = nil
+    ) async throws -> SendMessageResult {
+        let token = try await validToken()
         let presign = try await requireApi().presign(
             token: token,
             filename: filename ?? defaultImageFilename(mimeType: mimeType),
@@ -294,14 +330,11 @@ public final class HermesLiveChat {
         )
         let clientMsgId = newClientMsgId()
         let implicitConversation = conversationId == nil
-        if implicitConversation && currentConversationId == nil {
-            token = try await ensureActiveConversation(token: token)
-        }
         try ensureRealtimeConnected(token: token)
         let convId = conversationId ?? currentConversationId
-        let message: Message
+        let result: SendMessageResult
         do {
-            message = try await requireApi().sendImage(
+            result = try await requireApi().sendImage(
                 token: token,
                 conversationId: convId,
                 key: key,
@@ -312,7 +345,7 @@ public final class HermesLiveChat {
             )
         } catch let error as HermesLiveChatException where implicitConversation && error.error == .conversationClosed {
             forgetCurrentConversation(convId)
-            message = try await requireApi().sendImage(
+            result = try await requireApi().sendImage(
                 token: token,
                 conversationId: nil,
                 key: key,
@@ -322,11 +355,7 @@ public final class HermesLiveChat {
                 clientMsgId: clientMsgId
             )
         }
-        rememberConversation(message.conversationId)
-        _ = rememberSeen(message.uuid)
-        _ = rememberSeen(message.clientMsgId)
-        touchRealtimeActivity()
-        return message
+        return handleSendResult(result)
     }
 
     public func history(conversationId: String, afterId: String? = nil, limit: Int = 50) async throws -> [Message] {
@@ -355,6 +384,27 @@ public final class HermesLiveChat {
     public func markRead(conversationId: String, messageId: String) async throws {
         try await requireApi().markRead(token: try await validToken(), messageId: messageId)
         rememberConversation(conversationId)
+    }
+
+    private func handleSendResult(_ result: SendMessageResult) -> SendMessageResult {
+        if let conversation = result.conversation {
+            rememberConversation(conversation.uuid)
+        }
+        for message in result.messages {
+            _ = rememberSeen(message.uuid)
+            _ = rememberSeen(message.clientMsgId)
+            if message.uuid == result.message.uuid || message.clientMsgId == result.message.clientMsgId {
+                continue
+            }
+            if let conversation = result.conversation {
+                emit(.messageReceived(message, conversation))
+            }
+        }
+        rememberConversation(result.message.conversationId)
+        _ = rememberSeen(result.message.uuid)
+        _ = rememberSeen(result.message.clientMsgId)
+        touchRealtimeActivity()
+        return result
     }
 
     public func disconnect() {
@@ -441,30 +491,6 @@ public final class HermesLiveChat {
         if let active = conversations.first(where: { $0.status != "closed" }) {
             rememberConversation(active.uuid)
         }
-    }
-
-    private func ensureActiveConversation(token: String) async throws -> String {
-        await refreshCurrentConversation(token: token)
-        if currentConversationId != nil { return token }
-        let cfg = try requireConfig()
-        guard let session = stored else { return token }
-        let json = try await requireApi().initSession(identity: VisitorIdentity(), oldVisitorToken: token)
-        let realtimeUrl = ((json["realtime"] as? [String: Any])?["url"] as? String)
-            .flatMap(URL.init(string:)) ?? session.realtimeUrl ?? cfg.realtimeUrl
-        let next = StoredSession(
-            appKey: session.appKey,
-            visitorId: json["visitor_id"] as? String ?? session.visitorId,
-            contactId: json["contact_id"] as? Int ?? session.contactId,
-            token: json["token"] as? String ?? session.token,
-            tokenExp: json["token_exp"] as? Int ?? session.tokenExp,
-            realtimeUrl: realtimeUrl,
-            lastConversationId: session.lastConversationId
-        )
-        stored = next
-        store.save(next)
-        await refreshCurrentConversation(token: next.token)
-        connectRealtime(url: realtimeUrl, token: next.token)
-        return next.token
     }
 
     private func ensureRealtimeConnected(token: String) throws {
@@ -633,24 +659,24 @@ private final class ApiClient {
         return try await post(path: "/api/livechat/v1/init", body: body.compactMapValues { $0 }, token: oldVisitorToken)
     }
 
-    func sendText(token: String, conversationId: String?, text: String, clientMsgId: String) async throws -> Message {
+    func sendText(token: String, conversationId: String?, text: String, clientMsgId: String) async throws -> SendMessageResult {
         var body: [String: Any] = [
             "client_msg_id": clientMsgId,
             "content_type": "text",
             "content": ["text": text],
         ]
         body["conversation_id"] = conversationId
-        return Message.from(try await messageEnvelope(post(path: "/api/livechat/v1/messages", body: body.compactMapValues { $0 }, token: token)))
+        return SendMessageResult.from(try await post(path: "/api/livechat/v1/messages", body: body.compactMapValues { $0 }, token: token))
     }
 
-    func sendImage(token: String, conversationId: String?, key: String, url: String, mimeType: String, size: Int, clientMsgId: String) async throws -> Message {
+    func sendImage(token: String, conversationId: String?, key: String, url: String, mimeType: String, size: Int, clientMsgId: String) async throws -> SendMessageResult {
         var body: [String: Any] = [
             "client_msg_id": clientMsgId,
             "content_type": "image",
             "content": ["key": key, "url": url, "mime": mimeType, "size": size],
         ]
         body["conversation_id"] = conversationId
-        return Message.from(try await messageEnvelope(post(path: "/api/livechat/v1/messages", body: body.compactMapValues { $0 }, token: token)))
+        return SendMessageResult.from(try await post(path: "/api/livechat/v1/messages", body: body.compactMapValues { $0 }, token: token))
     }
 
     func markRead(token: String, messageId: String) async throws {
@@ -738,9 +764,6 @@ private final class ApiClient {
         return payload
     }
 
-    private func messageEnvelope(_ json: [String: Any]) -> [String: Any] {
-        json["message"] as? [String: Any] ?? json
-    }
 }
 
 private final class RealtimeClient: CentrifugeClientDelegate {
@@ -1076,8 +1099,8 @@ public final class HermesLiveChatViewController: UIViewController {
         Task {
             await ensureSession()
             do {
-                let message = try await HermesLiveChat.shared.sendText(text)
-                await MainActor.run { addMessage(message) }
+                let messages = try await HermesLiveChat.shared.sendTextMessages(text)
+                await MainActor.run { messages.forEach(addMessage) }
             } catch {
                 await MainActor.run {
                     input.text = text
@@ -1272,6 +1295,10 @@ private func defaultImageFilename(mimeType: String) -> String {
 
 private func newClientMsgId() -> String {
     UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+}
+
+private func messageEnvelope(_ json: [String: Any]) -> [String: Any] {
+    json["message"] as? [String: Any] ?? json
 }
 
 private func imageExtension(mimeType: String) -> String {

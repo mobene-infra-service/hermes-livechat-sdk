@@ -63,7 +63,7 @@ class ApiClient {
     );
   }
 
-  Future<Message> sendText({
+  Future<SendMessageResult> sendText({
     required String visitorToken,
     String? conversationId,
     required String text,
@@ -79,10 +79,10 @@ class ApiClient {
         'content': {'text': text},
       },
     );
-    return Message.fromJson(_messageEnvelope(json));
+    return SendMessageResult.fromJson(json);
   }
 
-  Future<Message> sendImage({
+  Future<SendMessageResult> sendImage({
     required String visitorToken,
     String? conversationId,
     required String key,
@@ -101,7 +101,7 @@ class ApiClient {
         'content': {'key': key, 'url': url, 'mime': mimeType, 'size': size},
       },
     );
-    return Message.fromJson(_messageEnvelope(json));
+    return SendMessageResult.fromJson(json);
   }
 
   Future<void> markRead({
@@ -191,12 +191,6 @@ class ApiClient {
   void close() => _http.close();
 
   // ── internals ──────────────────────────────────────────────────────────
-
-  Map<String, Object?> _messageEnvelope(Map<String, Object?> json) {
-    final inner = json['message'];
-    if (inner is Map) return Map<String, Object?>.from(inner);
-    return json;
-  }
 
   Future<Map<String, Object?>> _get(
     String path, {

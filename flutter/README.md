@@ -52,7 +52,9 @@ SDK 能力按三端对齐：
 - `prefetchWelcome(locale?)`
 - `startSession(identity)`
 - `sendText(text, conversationId?)`
+- `sendTextMessages(text, conversationId?)`
 - `sendImage(...)`
+- `sendImageMessages(...)`
 - `history(conversationId, afterId?, limit?)`
 - `markRead(conversationId, messageId)`
 - `events`
@@ -133,7 +135,7 @@ Navigator.of(context).push(
 
 默认 UI 不带图片选择器；业务 App 可以继续用能力层的 `sendImage()` 接入自己的图片选择和预览。
 
-`startSessionOnOpen` 默认是 `false`，以保持“打开入口只拉欢迎语，不创建 visitor”的流程。设为 `true` 时，进入聊天页会立即创建 / 续签 session 并尝试恢复当前会话历史；如果历史中已有 `content_type=welcome`，会作为会话第一条消息渲染，不再展示本地占位欢迎语。
+`startSessionOnOpen` 默认是 `false`，以保持“打开入口只拉欢迎语，不创建 visitor”的流程。设为 `true` 时，进入聊天页会立即创建 / 续签 visitor session、尝试恢复已有会话历史并连接 realtime；不会因为打开页面而创建空对话。如果历史中已有 `content_type=welcome`，会作为会话第一条消息渲染，不再展示本地占位欢迎语。
 
 ## 自定义 UI 接入
 
@@ -147,7 +149,7 @@ final welcome = await HermesLiveChat.instance.prefetchWelcome(locale: 'zh-CN');
 
 这一步只读取配置，不创建 visitor，不连接 WebSocket。业务 UI 可以把 `welcome` 展示成第一条欢迎语。
 
-### 2. 用户首次发送前创建会话
+### 2. 用户首次发送前创建 visitor session
 
 ```dart
 await HermesLiveChat.instance.startSession(
@@ -164,7 +166,7 @@ await HermesLiveChat.instance.startSession(
 );
 ```
 
-`startSession()` 会调用 `/init`，拿到 visitor token，并用同一个 token 连接 Centrifugo。后续 REST 和实时消息鉴权都由 SDK 内部处理。
+`startSession()` 会调用 `/init`，拿到 visitor token，并用同一个 token 连接 Centrifugo。它不会创建空对话；首次发送才会由服务端创建真实对话，并在同一个响应里返回 `welcome` 和本次用户消息。自定义 UI 若要一次性合并渲染，使用 `sendTextMessages()` / `sendImageMessages()`；`sendText()` / `sendImage()` 仍保持返回本次用户消息。SDK 也会把额外的 `welcome` 通过 `events` 下发，并用响应消息去重后续 realtime。
 
 ### 3. 监听消息和状态
 

@@ -88,7 +88,7 @@ HermesLiveChatActivity.open(
 )
 ```
 
-`startSessionOnOpen = true` 适合完整聊天页：进入页面会创建或续签 session、恢复当前会话历史并连接实时通道。默认值 `false` 只适合“预览欢迎语、不创建 visitor”的入口。
+`startSessionOnOpen = true` 适合完整聊天页：进入页面会创建或续签 visitor session、恢复已有会话历史并连接实时通道。默认值 `false` 只适合“预览欢迎语、不创建 visitor”的入口。
 
 默认聊天页已包含：
 
@@ -108,7 +108,7 @@ HermesLiveChatActivity.open(
 val welcome = HermesLiveChat.prefetchWelcome(locale = "zh-CN")
 ```
 
-创建或续签 session，并连接 realtime：
+创建或续签 visitor session，并连接 realtime；不会因为打开页面而创建空对话：
 
 ```kotlin
 HermesLiveChat.startSession(
@@ -155,6 +155,8 @@ val imageMessage = HermesLiveChat.sendImage(
     filename = "order.jpg",
 )
 ```
+
+首次发送会由服务端创建真实对话，并在同一个响应里返回 `welcome` 和本次用户消息。自定义 UI 若要一次性合并渲染，使用 `sendTextMessages()` / `sendImageMessages()`；`sendText()` / `sendImage()` 仍保持返回本次用户消息。SDK 也会把额外的 `welcome` 通过 `events` 下发，并用响应消息去重后续 realtime。
 
 拉历史和标记已读：
 

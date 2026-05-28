@@ -6,6 +6,7 @@ import 'package:hermes_livechat/src/internal/api_client.dart';
 import 'package:hermes_livechat/src/internal/realtime.dart';
 import 'package:hermes_livechat/src/internal/session.dart';
 import 'package:hermes_livechat/src/internal/storage.dart';
+import 'package:hermes_livechat/src/models.dart' show SendMessageResult;
 
 /// In-memory [SessionStore] that never touches platform secure storage.
 class _MemoryStore extends SessionStore {
@@ -98,7 +99,7 @@ class _FakeApi extends ApiClient {
   }
 
   @override
-  Future<Message> sendText({
+  Future<SendMessageResult> sendText({
     required String visitorToken,
     String? conversationId,
     required String text,
@@ -114,7 +115,7 @@ class _FakeApi extends ApiClient {
         message: 'conversation is closed',
       );
     }
-    return Message(
+    final message = Message(
       uuid: 'msg_${sentConversationIds.length}',
       conversationId: responseConversationId,
       clientMsgId: clientMsgId,
@@ -124,6 +125,7 @@ class _FakeApi extends ApiClient {
       content: {'text': text},
       createdAt: 1778668800 + sentConversationIds.length,
     );
+    return SendMessageResult(message: message, messages: [message]);
   }
 
   @override
