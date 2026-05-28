@@ -21,11 +21,11 @@ SDK 在 iOS 13+ 内处理默认 UIKit 页面、WebSocket 生命周期和 session
 | `realtimeUrl` | 可选。默认从 `baseUrl` 推导到 `/connection/websocket` |
 | `customerId` | 可选。业务侧稳定、不可枚举的用户标识，用于复用联系人和历史 |
 
-App Secret 只在管理后台和客户 App Backend 使用，不是 iOS SDK 参数：
+后台编辑 App 渠道时，开关名称是「Secret 验证」。App Secret 只在管理后台和客户 App Backend 使用，不是 iOS SDK 参数：
 
 | 配置项 | 配置位置 | 说明 |
 |---|---|---|
-| `is_auth` | LiveChat 管理后台 App 渠道 | `0` 表示弱绑定模式；`1` 表示开启身份签名校验 |
+| `Secret 验证` (`is_auth`) | LiveChat 管理后台 App 渠道 | 关闭表示弱绑定模式；开启表示强身份签名校验 |
 | `Secret Key` / `App Secret` | LiveChat 管理后台 App 渠道 | 创建或编辑 App 渠道时生成/配置，客户 App Backend 保存，不能写进 iOS App |
 | `identity_token` | 客户 App Backend 签发 | 使用 App Secret 以 HS256 签发，iOS App 通过 `VisitorIdentity(identityToken: ...)` 传给 SDK |
 
@@ -196,11 +196,11 @@ if let conversationId = HermesLiveChat.shared.currentConversationId {
 | `name` / `email` / `avatar` | 展示和客服识别，不作为强认证凭据 |
 | `businessId` / `ticketId` | 可选业务上下文 |
 | `attrs` | 扩展上下文，例如会员等级、订单号、App 版本 |
-| `identityToken` | `is_auth=1` 时必填，由客户 App Backend 用 App Secret 签发 |
+| `identityToken` | 「Secret 验证」开启时必填，由客户 App Backend 用 App Secret 签发 |
 
-默认 `is_auth=0` 时，SDK 不需要客户 App Backend 签 token，也不需要 App secret。App Secret 不能放进 iOS App。
+默认「Secret 验证」关闭时，SDK 不需要客户 App Backend 签 token，也不需要 App secret。App Secret 不能放进 iOS App。
 
-如果启用 `is_auth=1`，客户 App Backend 必须签发短期 HS256 `identity_token`，iOS App 再通过 `VisitorIdentity(identityToken: ...)` 传给 SDK。
+如果启用「Secret 验证」，客户 App Backend 必须签发短期 HS256 `identity_token`，iOS App 再通过 `VisitorIdentity(identityToken: ...)` 传给 SDK。
 
 ## 生命周期
 
