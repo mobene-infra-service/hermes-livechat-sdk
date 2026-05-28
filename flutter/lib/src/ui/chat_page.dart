@@ -108,9 +108,11 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
   }
 
   Future<void> _bootstrap() async {
-    await _loadWelcome();
     if (widget.startSessionOnOpen && mounted) {
       await _ensureSession();
+    }
+    if (mounted) {
+      await _loadWelcome();
     }
   }
 
@@ -258,11 +260,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
       changed = true;
     }
     if (!changed) return;
-    _messages.sort((a, b) {
-      final byTime = a.createdAt.compareTo(b.createdAt);
-      if (byTime != 0) return byTime;
-      return a.uuid.compareTo(b.uuid);
-    });
+    _messages.sort(_compareMessages);
     setState(() {});
     _scrollToBottom();
   }
@@ -331,7 +329,10 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
 
     final hasPersistedWelcome =
         _messages.any((message) => message.contentType == 'welcome');
-    final hasWelcome = _welcome != null && !hasPersistedWelcome;
+    final hasWelcome = _welcome != null &&
+        !_hasSession &&
+        _messages.isEmpty &&
+        !hasPersistedWelcome;
     final count = _messages.length + (hasWelcome ? 1 : 0);
     if (count == 0) {
       return Center(
@@ -588,4 +589,18 @@ String _textForMessage(Message message) {
     return message.content['caption']?.toString() ?? '';
   }
   return message.content['text']?.toString() ?? '[${message.contentType}]';
+}
+
+int _compareMessages(Message a, Message b) {
+  final byTime = a.createdAt.compareTo(b.createdAt);
+  if (byTime != 0) return byTime;
+  final byRank = _messageSortRank(a).compareTo(_messageSortRank(b));
+  if (byRank != 0) return byRank;
+  return a.uuid.compareTo(b.uuid);
+}
+
+int _messageSortRank(Message message) {
+  if (message.contentType == 'welcome') return 0;
+  if (message.contentType == 'close') return 2;
+  return 1;
 }

@@ -78,6 +78,7 @@ class _FakeApi extends ApiClient {
   String responseConversationId = 'conv_1';
   String responseRealtimeUrl = 'wss://chat.example.com/connection/websocket';
   List<Conversation> conversations = const [];
+  List<Message> listedMessages = const [];
   final sentConversationIds = <String?>[];
 
   @override
@@ -131,6 +132,17 @@ class _FakeApi extends ApiClient {
     int limit = 20,
   }) async {
     return conversations;
+  }
+
+  @override
+  Future<List<Message>> listMessages({
+    required String visitorToken,
+    required String conversationId,
+    String? afterId,
+    String? cursor,
+    int limit = 80,
+  }) async {
+    return listedMessages;
   }
 }
 
@@ -195,6 +207,49 @@ void main() {
 
       expect(api.lastOldVisitorToken, 'cached_token');
       expect(session.currentConversationId, 'conv_cached');
+
+      await session.destroy();
+    });
+  });
+
+  group('Session.history', () {
+    test('returns messages in chronological order', () async {
+      final config = _baseConfig();
+      final api = _FakeApi(config)
+        ..listedMessages = [
+          const Message(
+            uuid: 'msg_2',
+            conversationId: 'conv_1',
+            clientMsgId: 'c_2',
+            senderType: 'visitor',
+            senderId: 'v_1',
+            contentType: 'text',
+            content: {'text': 'hi'},
+            createdAt: 1778668800,
+          ),
+          const Message(
+            uuid: 'msg_1',
+            conversationId: 'conv_1',
+            clientMsgId: 'c_1',
+            senderType: 'system',
+            senderId: 'system',
+            contentType: 'welcome',
+            content: {'text': 'welcome'},
+            createdAt: 1778668800,
+          ),
+        ];
+      final session = Session(
+        config: config,
+        api: api,
+        transport: _FakeTransport(),
+        store: _MemoryStore(),
+      );
+
+      await session.startSession(const VisitorIdentity());
+      final messages = await session.history(conversationId: 'conv_1');
+
+      expect(messages.map((message) => message.uuid), ['msg_1', 'msg_2']);
+      expect(messages.first.contentType, 'welcome');
 
       await session.destroy();
     });

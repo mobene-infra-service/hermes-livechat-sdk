@@ -57,9 +57,10 @@ class HermesLiveChatActivity : Activity() {
         configureWindow()
         buildUi()
         subscribeEvents()
-        loadWelcome()
         if (intent.getBooleanExtra(EXTRA_START_ON_OPEN, false)) {
-            ensureSession()
+            bootstrapSessionAndWelcome()
+        } else {
+            loadWelcome()
         }
     }
 
@@ -262,13 +263,29 @@ class HermesLiveChatActivity : Activity() {
 
     private fun loadWelcome() {
         scope.launch {
+            loadWelcomeOnce()
+        }
+    }
+
+    private suspend fun loadWelcomeOnce() {
+        runCatching {
+            HermesLiveChat.prefetchWelcome(intent.getStringExtra(EXTRA_LOCALE))
+        }.onSuccess {
+            if (it.isNotBlank()) showWelcomePlaceholder(it)
+        }.onFailure {
+            addSystemMessage(it.message ?: "加载欢迎语失败")
+        }
+    }
+
+    private fun bootstrapSessionAndWelcome() {
+        if (started) return
+        scope.launch {
             runCatching {
-                HermesLiveChat.prefetchWelcome(intent.getStringExtra(EXTRA_LOCALE))
-            }.onSuccess {
-                if (it.isNotBlank()) showWelcomePlaceholder(it)
+                startSessionAndLoadHistory()
             }.onFailure {
-                addSystemMessage(it.message ?: "加载欢迎语失败")
+                addSystemMessage(it.message ?: "初始化会话失败")
             }
+            if (!started) loadWelcomeOnce()
         }
     }
 
@@ -314,6 +331,7 @@ class HermesLiveChatActivity : Activity() {
 
     private fun showWelcomePlaceholder(text: String) {
         if (hasPersistedWelcome) return
+        if (messageKeys.isNotEmpty()) return
         if (welcomePlaceholder != null) return
         welcomePlaceholder = addBubble(text, mine = false)
     }

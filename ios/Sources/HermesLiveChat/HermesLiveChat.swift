@@ -337,7 +337,19 @@ public final class HermesLiveChat {
             limit: limit
         )
         rememberConversation(conversationId)
-        return messages
+        return messages.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+            let leftRank = messageSortRank($0)
+            let rightRank = messageSortRank($1)
+            if leftRank != rightRank { return leftRank < rightRank }
+            return $0.uuid < $1.uuid
+        }
+    }
+
+    private func messageSortRank(_ message: Message) -> Int {
+        if message.contentType == "welcome" { return 0 }
+        if message.contentType == "close" { return 2 }
+        return 1
     }
 
     public func markRead(conversationId: String, messageId: String) async throws {
@@ -907,9 +919,11 @@ public final class HermesLiveChatViewController: UIViewController {
         observeKeyboard()
         observeEvents()
         Task {
-            await loadWelcome()
             if startSessionOnOpen {
                 await ensureSession()
+            }
+            if !startSessionOnOpen || !started {
+                await loadWelcome()
             }
         }
     }
@@ -1082,6 +1096,7 @@ public final class HermesLiveChatViewController: UIViewController {
 
     private func showWelcomePlaceholder(_ text: String) {
         guard !hasPersistedWelcome else { return }
+        guard messageKeys.isEmpty else { return }
         guard welcomePlaceholder == nil else { return }
         welcomePlaceholder = addBubble(text, mine: false, createdAt: nil)
     }

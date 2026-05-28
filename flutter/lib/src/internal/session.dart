@@ -212,7 +212,7 @@ class Session {
       limit: limit,
     );
     _rememberConversation(conversationId);
-    return messages;
+    return [...messages]..sort(_compareMessages);
   }
 
   Future<void> ensureConnected() async {
@@ -526,4 +526,18 @@ class Session {
       store.save(_stored!);
     }
   }
+}
+
+int _compareMessages(Message a, Message b) {
+  final byTime = a.createdAt.compareTo(b.createdAt);
+  if (byTime != 0) return byTime;
+  final byRank = _messageSortRank(a).compareTo(_messageSortRank(b));
+  if (byRank != 0) return byRank;
+  return a.uuid.compareTo(b.uuid);
+}
+
+int _messageSortRank(Message message) {
+  if (message.contentType == 'welcome') return 0;
+  if (message.contentType == 'close') return 2;
+  return 1;
 }

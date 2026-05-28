@@ -192,7 +192,7 @@ HermesLiveChatActivity.open(
 
 默认 UI 不带图片选择器；业务 App 可以继续用能力层的 `sendImage()` 接入自己的图片选择和预览。
 
-`startSessionOnOpen` 默认是 `false`，以保持“打开入口只拉欢迎语，不创建 visitor”的流程。正式接入聊天页时建议显式设为 `true`：进入页面会立即创建 / 续签 session，并根据 SDK 本地保存的 `lastConversationId` 恢复当前会话历史。否则用户退出聊天页后再打开，只会先看到欢迎语，容易被误认为是新会话。
+`startSessionOnOpen` 默认是 `false`，以保持“打开入口只拉欢迎语，不创建 visitor”的流程。正式接入聊天页时建议显式设为 `true`：进入页面会立即创建 / 续签 session，并根据 SDK 本地保存的 `lastConversationId` 恢复当前会话历史；如果历史中已有 `content_type=welcome`，会作为会话第一条消息渲染，不再展示本地占位欢迎语。否则用户退出聊天页后再打开，只会先看到欢迎语，容易被误认为是新会话。
 
 如果业务入口只是“客服预览 / 欢迎语预取”，可以继续使用 `false`；如果入口就是完整聊天页，使用 `true`。
 
@@ -297,6 +297,7 @@ if (conversationId != null) {
         limit = 50,
     )
 
+    // SDK 返回按 created_at 正序排列的历史消息。
     messages.lastOrNull()?.let { message ->
         HermesLiveChat.markRead(
             conversationId = conversationId,

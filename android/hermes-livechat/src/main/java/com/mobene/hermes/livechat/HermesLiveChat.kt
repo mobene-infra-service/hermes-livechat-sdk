@@ -394,7 +394,17 @@ object HermesLiveChat {
     ): List<Message> {
         val messages = requireApi().history(validToken(), conversationId, afterId, limit)
         rememberConversation(conversationId)
-        return messages
+        return messages.sortedWith(
+            compareBy<Message> { it.createdAt }
+                .thenBy { messageSortRank(it) }
+                .thenBy { it.uuid },
+        )
+    }
+
+    private fun messageSortRank(message: Message): Int = when (message.contentType) {
+        "welcome" -> 0
+        "close" -> 2
+        else -> 1
     }
 
     fun disconnect() {

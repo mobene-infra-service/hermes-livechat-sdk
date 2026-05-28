@@ -170,7 +170,7 @@ HermesLiveChatLauncher.present(
 
 默认 UI 不带图片选择器；业务 App 可以继续用能力层的 `sendImage()` 接入自己的图片选择和预览。
 
-`startSessionOnOpen` 默认是 `false`，以保持“打开入口只拉欢迎语，不创建 visitor”的流程。设为 `true` 时，进入聊天页会立即创建 / 续签 session 并尝试恢复当前会话历史。
+`startSessionOnOpen` 默认是 `false`，以保持“打开入口只拉欢迎语，不创建 visitor”的流程。设为 `true` 时，进入聊天页会立即创建 / 续签 session 并尝试恢复当前会话历史；如果历史中已有 `content_type=welcome`，会作为会话第一条消息渲染，不再展示本地占位欢迎语。
 
 ## 自定义 UI 接入
 
@@ -264,6 +264,7 @@ if let conversationId = HermesLiveChat.shared.currentConversationId {
         limit: 50
     )
 
+    // SDK 返回按 created_at 正序排列的历史消息。
     if let last = messages.last {
         try await HermesLiveChat.shared.markRead(
             conversationId: conversationId,
