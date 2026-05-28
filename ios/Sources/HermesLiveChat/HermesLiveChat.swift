@@ -1,176 +1,4 @@
 import Foundation
-import Security
-import SwiftCentrifuge
-import UIKit
-
-public struct HermesLiveChatConfig {
-    public let baseUrl: URL
-    public let appKey: String
-    public let realtimeUrl: URL
-    public let refreshLeewaySeconds: TimeInterval
-    public let realtimeIdleDisconnectDelay: TimeInterval
-
-    public init(
-        baseUrl: URL,
-        appKey: String,
-        realtimeUrl: URL? = nil,
-        refreshLeewaySeconds: TimeInterval = 60,
-        realtimeIdleDisconnectDelay: TimeInterval = 5 * 60
-    ) {
-        self.baseUrl = baseUrl
-        self.appKey = appKey
-        self.realtimeUrl = realtimeUrl ?? HermesLiveChatConfig.deriveRealtimeUrl(baseUrl)
-        self.refreshLeewaySeconds = refreshLeewaySeconds
-        self.realtimeIdleDisconnectDelay = realtimeIdleDisconnectDelay
-    }
-
-    private static func deriveRealtimeUrl(_ baseUrl: URL) -> URL {
-        var components = URLComponents(url: baseUrl, resolvingAgainstBaseURL: false)!
-        components.scheme = components.scheme == "https" ? "wss" : "ws"
-        components.path = "/connection/websocket"
-        components.query = nil
-        return components.url!
-    }
-}
-
-public struct VisitorIdentity: Codable {
-    public var customerId: String?
-    public var externalUserId: String?
-    public var businessId: String?
-    public var ticketId: String?
-    public var number: String?
-    public var email: String?
-    public var name: String?
-    public var avatar: String?
-    public var locale: String?
-    public var attrs: [String: String]?
-    public var identityToken: String?
-
-    public init(
-        customerId: String? = nil,
-        externalUserId: String? = nil,
-        businessId: String? = nil,
-        ticketId: String? = nil,
-        number: String? = nil,
-        email: String? = nil,
-        name: String? = nil,
-        avatar: String? = nil,
-        locale: String? = nil,
-        attrs: [String: String]? = nil,
-        identityToken: String? = nil
-    ) {
-        self.customerId = customerId
-        self.externalUserId = externalUserId
-        self.businessId = businessId
-        self.ticketId = ticketId
-        self.number = number
-        self.email = email
-        self.name = name
-        self.avatar = avatar
-        self.locale = locale
-        self.attrs = attrs
-        self.identityToken = identityToken
-    }
-}
-
-public struct VisitorSession {
-    public let visitorId: String
-    public let contactId: Int
-    public let tokenExp: Int
-    public let realtimeUrl: URL
-}
-
-public enum LiveChatConnectionState {
-    case idle
-    case connecting
-    case connected
-    case disconnected
-}
-
-public enum HermesLiveChatError: Error {
-    case notConfigured
-    case network
-    case badRequest
-    case tokenInvalid
-    case tokenExpired
-    case invalidVisitorId
-    case conversationForbidden
-    case conversationClosed
-    case messageRateLimited
-    case contentInvalid
-    case attachmentTooLarge
-    case attachmentTypeInvalid
-    case channelDisabled
-    case domainNotAllowed
-    case orgDisabled
-    case appInitTokenInvalid
-    case appInitTokenExpired
-    case realtimeConnectUnauthorized
-    case realtimeProviderUnavailable
-    case unknown
-}
-
-public struct HermesLiveChatException: Error {
-    public let error: HermesLiveChatError
-    public let code: String?
-    public let message: String?
-    public let status: Int?
-}
-
-public struct Conversation {
-    public let uuid: String
-    public let status: String
-    public let channelType: String
-    public let channelId: String
-}
-
-public struct Message: Identifiable {
-    public var id: String { uuid }
-    public let uuid: String
-    public let conversationId: String
-    public let clientMsgId: String
-    public let senderType: String
-    public let senderId: String
-    public let contentType: String
-    public let content: [String: Any]
-    public let readAt: Int?
-    public let createdAt: Int
-
-    public var displayText: String {
-        if contentType == "text" || contentType == "welcome" || contentType == "close" {
-            return content["text"] as? String ?? ""
-        }
-        if contentType == "image" {
-            return content["url"] as? String ?? ""
-        }
-        return "[\(contentType)]"
-    }
-}
-
-struct SendMessageResult {
-    let conversation: Conversation?
-    let message: Message
-    let messages: [Message]
-
-    static func from(_ json: [String: Any]) -> SendMessageResult {
-        let conversation = (json["conversation"] as? [String: Any]).map(Conversation.from)
-        let message = Message.from(messageEnvelope(json))
-        let messages = (json["messages"] as? [[String: Any]] ?? []).map(Message.from)
-        return SendMessageResult(
-            conversation: conversation,
-            message: message,
-            messages: messages.isEmpty ? [message] : messages
-        )
-    }
-}
-
-public enum HermesLiveChatEvent {
-    case connectionStateChanged(LiveChatConnectionState)
-    case messageReceived(Message, Conversation)
-    case conversationUpdated(Conversation)
-    case messageRead(conversationId: String, messageId: String, readAt: Int)
-    case error(HermesLiveChatException)
-}
 
 public final class HermesLiveChat {
     public static let shared = HermesLiveChat()
@@ -195,9 +23,10 @@ public final class HermesLiveChat {
         disconnect()
         self.config = config
         self.api = ApiClient(config: config)
-        self.realtime = RealtimeClient { [weak self] event in
-            self?.emitRealtimeEvent(event)
-        }
+        self.realtime = RealtimeClient(
+            emit: { [weak self] event in self?.emitRealtimeEvent(event) },
+            onPublication: { [weak self] json in self?.handlePublication(json) }
+        )
         self.stored = nil
         self.currentConversationId = nil
         self.seen.removeAll()
@@ -231,23 +60,10 @@ public final class HermesLiveChat {
             return cached.toVisitorSession(defaultRealtimeUrl: cfg.realtimeUrl)
         }
 
-        let json = try await requireApi().initSession(identity: identity, oldVisitorToken: cached?.token)
-        let realtimeUrl = ((json["realtime"] as? [String: Any])?["url"] as? String)
-            .flatMap(URL.init(string:)) ?? cfg.realtimeUrl
-        let session = StoredSession(
-            appKey: cfg.appKey,
-            visitorId: json["visitor_id"] as? String ?? "",
-            contactId: json["contact_id"] as? Int ?? 0,
-            token: json["token"] as? String ?? "",
-            tokenExp: json["token_exp"] as? Int ?? 0,
-            realtimeUrl: realtimeUrl,
-            lastConversationId: currentConversationId
-        )
-        stored = session
-        store.save(session)
-        await refreshCurrentConversation(token: session.token)
-        connectRealtime(url: realtimeUrl, token: session.token)
-        return session.toVisitorSession(defaultRealtimeUrl: cfg.realtimeUrl)
+        let next = try await renewSession(identity: identity, oldToken: cached?.token, fallbackRealtimeUrl: nil)
+        await refreshCurrentConversation(token: next.token)
+        connectRealtime(url: next.realtimeUrl ?? cfg.realtimeUrl, token: next.token)
+        return next.toVisitorSession(defaultRealtimeUrl: cfg.realtimeUrl)
     }
 
     public func sendText(_ text: String, conversationId: String? = nil) async throws -> Message {
@@ -261,25 +77,9 @@ public final class HermesLiveChat {
     private func sendTextResult(_ text: String, conversationId: String? = nil) async throws -> SendMessageResult {
         let token = try await validToken()
         let clientMsgId = newClientMsgId()
-        let implicitConversation = conversationId == nil
         try ensureRealtimeConnected(token: token)
-        let convId = conversationId ?? currentConversationId
-        let result: SendMessageResult
-        do {
-            result = try await requireApi().sendText(
-                token: token,
-                conversationId: convId,
-                text: text,
-                clientMsgId: clientMsgId
-            )
-        } catch let error as HermesLiveChatException where implicitConversation && error.error == .conversationClosed {
-            forgetCurrentConversation(convId)
-            result = try await requireApi().sendText(
-                token: token,
-                conversationId: nil,
-                text: text,
-                clientMsgId: clientMsgId
-            )
+        let result = try await retryOnConversationClosed(conversationId) { [api = try requireApi()] convId in
+            try await api.sendText(token: token, conversationId: convId, text: text, clientMsgId: clientMsgId)
         }
         return handleSendResult(result)
     }
@@ -309,7 +109,8 @@ public final class HermesLiveChat {
         conversationId: String? = nil
     ) async throws -> SendMessageResult {
         let token = try await validToken()
-        let presign = try await requireApi().presign(
+        let api = try requireApi()
+        let presign = try await api.presign(
             token: token,
             filename: filename ?? defaultImageFilename(mimeType: mimeType),
             mimeType: mimeType,
@@ -323,19 +124,16 @@ public final class HermesLiveChat {
         else {
             throw HermesLiveChatException(error: .badRequest, code: nil, message: "invalid attachment presign response", status: nil)
         }
-        try await requireApi().uploadPresigned(
+        try await api.uploadPresigned(
             url: uploadURL,
             method: presign["method"] as? String ?? "PUT",
             headers: presign["headers"] as? [String: String] ?? [:],
             data: data
         )
         let clientMsgId = newClientMsgId()
-        let implicitConversation = conversationId == nil
         try ensureRealtimeConnected(token: token)
-        let convId = conversationId ?? currentConversationId
-        let result: SendMessageResult
-        do {
-            result = try await requireApi().sendImage(
+        let result = try await retryOnConversationClosed(conversationId) { convId in
+            try await api.sendImage(
                 token: token,
                 conversationId: convId,
                 key: key,
@@ -344,19 +142,27 @@ public final class HermesLiveChat {
                 size: data.count,
                 clientMsgId: clientMsgId
             )
-        } catch let error as HermesLiveChatException where implicitConversation && error.error == .conversationClosed {
-            forgetCurrentConversation(convId)
-            result = try await requireApi().sendImage(
-                token: token,
-                conversationId: nil,
-                key: key,
-                url: downloadURL,
-                mimeType: mimeType,
-                size: data.count,
-                clientMsgId: clientMsgId
-            )
         }
         return handleSendResult(result)
+    }
+
+    // retryOnConversationClosed runs `send` once with the caller-supplied (or
+    // remembered) conversation id; if the backend reports `.conversationClosed`
+    // and the caller did NOT pin a specific conversation, the stale pointer is
+    // dropped and the request retried with conversationId=nil so the server
+    // allocates a fresh one.
+    private func retryOnConversationClosed<R>(
+        _ explicitConversationId: String?,
+        _ send: (_ conversationId: String?) async throws -> R
+    ) async throws -> R {
+        let implicit = explicitConversationId == nil
+        let convId = explicitConversationId ?? currentConversationId
+        do {
+            return try await send(convId)
+        } catch let error as HermesLiveChatException where implicit && error.error == .conversationClosed {
+            forgetCurrentConversation(convId)
+            return try await send(nil)
+        }
     }
 
     public func history(conversationId: String, afterId: String? = nil, limit: Int = 50) async throws -> [Message] {
@@ -424,7 +230,7 @@ public final class HermesLiveChat {
         seen.removeAll()
     }
 
-    fileprivate func handlePublication(_ json: [String: Any]) {
+    private func handlePublication(_ json: [String: Any]) {
         touchRealtimeActivity()
         if let eventId = json["event_id"] as? String, !rememberSeen(eventId) {
             return
@@ -468,23 +274,43 @@ public final class HermesLiveChat {
         }
         stored = session
         if !isExpired(session.tokenExp) { return session.token }
-        let json = try await requireApi().initSession(identity: VisitorIdentity(), oldVisitorToken: session.token)
+
+        let next = try await renewSession(
+            identity: VisitorIdentity(),
+            oldToken: session.token,
+            fallbackRealtimeUrl: session.realtimeUrl
+        )
+        await refreshCurrentConversation(token: next.token)
+        connectRealtime(url: next.realtimeUrl ?? cfg.realtimeUrl, token: next.token)
+        return next.token
+    }
+
+    // renewSession hits /init (passing `oldToken` for renewal semantics),
+    // persists the response, and returns the new StoredSession. Both
+    // startSession and validToken share this — formerly each had its own copy
+    // of the JSON-extract + store.save block.
+    private func renewSession(
+        identity: VisitorIdentity,
+        oldToken: String?,
+        fallbackRealtimeUrl: URL?
+    ) async throws -> StoredSession {
+        let cfg = try requireConfig()
+        let json = try await requireApi().initSession(identity: identity, oldVisitorToken: oldToken)
         let realtimeUrl = ((json["realtime"] as? [String: Any])?["url"] as? String)
-            .flatMap(URL.init(string:)) ?? session.realtimeUrl ?? cfg.realtimeUrl
+            .flatMap(URL.init(string:)) ?? fallbackRealtimeUrl ?? cfg.realtimeUrl
+        let fallback = stored
         let next = StoredSession(
-            appKey: session.appKey,
-            visitorId: json["visitor_id"] as? String ?? session.visitorId,
-            contactId: json["contact_id"] as? Int ?? session.contactId,
-            token: json["token"] as? String ?? session.token,
-            tokenExp: json["token_exp"] as? Int ?? session.tokenExp,
+            appKey: cfg.appKey,
+            visitorId: json["visitor_id"] as? String ?? fallback?.visitorId ?? "",
+            contactId: json["contact_id"] as? Int ?? fallback?.contactId ?? 0,
+            token: json["token"] as? String ?? fallback?.token ?? "",
+            tokenExp: json["token_exp"] as? Int ?? fallback?.tokenExp ?? 0,
             realtimeUrl: realtimeUrl,
-            lastConversationId: session.lastConversationId
+            lastConversationId: currentConversationId ?? fallback?.lastConversationId
         )
         stored = next
         store.save(next)
-        await refreshCurrentConversation(token: next.token)
-        connectRealtime(url: realtimeUrl, token: next.token)
-        return next.token
+        return next
     }
 
     private func refreshCurrentConversation(token: String) async {
@@ -554,19 +380,10 @@ public final class HermesLiveChat {
     private func rememberConversation(_ id: String) {
         guard !id.isEmpty else { return }
         currentConversationId = id
-        if let session = stored {
-            let next = StoredSession(
-                appKey: session.appKey,
-                visitorId: session.visitorId,
-                contactId: session.contactId,
-                token: session.token,
-                tokenExp: session.tokenExp,
-                realtimeUrl: session.realtimeUrl,
-                lastConversationId: id
-            )
-            stored = next
-            store.save(next)
-        }
+        guard var session = stored else { return }
+        session.lastConversationId = id
+        stored = session
+        store.save(session)
     }
 
     private func forgetCurrentConversation(_ id: String?) {
@@ -574,18 +391,11 @@ public final class HermesLiveChat {
         if shouldClear {
             currentConversationId = nil
         }
-        if let session = stored {
-            let next = StoredSession(
-                appKey: session.appKey,
-                visitorId: session.visitorId,
-                contactId: session.contactId,
-                token: session.token,
-                tokenExp: session.tokenExp,
-                realtimeUrl: session.realtimeUrl,
-                lastConversationId: shouldClear ? nil : session.lastConversationId
-            )
-            stored = next
-            store.save(next)
+        guard var session = stored else { return }
+        if shouldClear {
+            session.lastConversationId = nil
+            stored = session
+            store.save(session)
         }
     }
 
@@ -617,756 +427,5 @@ public final class HermesLiveChat {
 
     private func emit(_ event: HermesLiveChatEvent) {
         continuations.values.forEach { $0.yield(event) }
-    }
-}
-
-private final class ApiClient {
-    let config: HermesLiveChatConfig
-    let session = URLSession(configuration: .default)
-
-    init(config: HermesLiveChatConfig) {
-        self.config = config
-    }
-
-    func publicConfig(locale: String?) async throws -> [String: Any] {
-        try await get(
-            path: "/api/livechat/v1/public-config",
-            query: [
-                "channel_type": "app",
-                "app_key": config.appKey,
-                "locale": locale,
-            ].compactMapValues { $0 }
-        )
-    }
-
-    func initSession(identity: VisitorIdentity, oldVisitorToken: String?) async throws -> [String: Any] {
-        var body: [String: Any] = [
-            "channel_type": "app",
-            "app_key": config.appKey,
-            "user": [
-                "email": identity.email,
-                "name": identity.name,
-                "avatar": identity.avatar,
-            ].compactMapValues { $0 },
-        ]
-        body["customer_id"] = identity.customerId
-        body["external_user_id"] = identity.externalUserId
-        body["business_id"] = identity.businessId
-        body["ticket_id"] = identity.ticketId
-        body["number"] = identity.number
-        body["locale"] = identity.locale
-        body["attrs"] = identity.attrs
-        body["identity_token"] = identity.identityToken
-        return try await post(path: "/api/livechat/v1/init", body: body.compactMapValues { $0 }, token: oldVisitorToken)
-    }
-
-    func sendText(token: String, conversationId: String?, text: String, clientMsgId: String) async throws -> SendMessageResult {
-        var body: [String: Any] = [
-            "client_msg_id": clientMsgId,
-            "content_type": "text",
-            "content": ["text": text],
-        ]
-        body["conversation_id"] = conversationId
-        return SendMessageResult.from(try await post(path: "/api/livechat/v1/messages", body: body.compactMapValues { $0 }, token: token))
-    }
-
-    func sendImage(token: String, conversationId: String?, key: String, url: String, mimeType: String, size: Int, clientMsgId: String) async throws -> SendMessageResult {
-        var body: [String: Any] = [
-            "client_msg_id": clientMsgId,
-            "content_type": "image",
-            "content": ["key": key, "url": url, "mime": mimeType, "size": size],
-        ]
-        body["conversation_id"] = conversationId
-        return SendMessageResult.from(try await post(path: "/api/livechat/v1/messages", body: body.compactMapValues { $0 }, token: token))
-    }
-
-    func markRead(token: String, messageId: String) async throws {
-        _ = try await post(path: "/api/livechat/v1/messages/\(messageId.urlEncoded)/read", body: nil, token: token)
-    }
-
-    func history(token: String, conversationId: String, afterId: String?, limit: Int) async throws -> [Message] {
-        let json = try await get(
-            path: "/api/livechat/v1/conversations/\(conversationId.urlEncoded)/messages",
-            query: [
-                "limit": "\(limit)",
-                "after_id": afterId,
-            ].compactMapValues { $0 },
-            token: token
-        )
-        return (json["items"] as? [[String: Any]] ?? []).map(Message.from)
-    }
-
-    func listConversations(token: String) async throws -> [Conversation] {
-        let json = try await get(
-            path: "/api/livechat/v1/conversations",
-            query: ["limit": "20"],
-            token: token
-        )
-        return (json["items"] as? [[String: Any]] ?? []).map(Conversation.from)
-    }
-
-    func presign(token: String, filename: String, mimeType: String, size: Int) async throws -> [String: Any] {
-        try await post(
-            path: "/api/livechat/v1/attachments/presign",
-            body: ["filename": filename, "mime": mimeType, "size": size],
-            token: token
-        )
-    }
-
-    func uploadPresigned(url: URL, method: String, headers: [String: String], data: Data) async throws {
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.httpBody = data
-        headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
-        let (_, response) = try await session.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 500
-        guard status < 300 else {
-            throw HermesLiveChatException(error: .attachmentTypeInvalid, code: nil, message: "attachment upload failed", status: status)
-        }
-    }
-
-    private func get(path: String, query: [String: String], token: String? = nil) async throws -> [String: Any] {
-        var components = URLComponents(url: config.baseUrl.liveChatAppendingPath(path), resolvingAgainstBaseURL: false)!
-        components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
-        var request = URLRequest(url: components.url!)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        return try await execute(request)
-    }
-
-    private func post(path: String, body: [String: Any]?, token: String?) async throws -> [String: Any] {
-        var request = URLRequest(url: config.baseUrl.liveChatAppendingPath(path))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let body {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        }
-        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        return try await execute(request)
-    }
-
-    private func execute(_ request: URLRequest) async throws -> [String: Any] {
-        let (data, response) = try await session.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 500
-        let payload = data.isEmpty ? [:] : (try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:])
-        let code = payload["code"].flatMap { Int("\($0)") }
-        if status < 200 || status >= 300 || (code != nil && code != 0) {
-            throw HermesLiveChatException(
-                error: mapBackendError(status: status, code: payload["code"].map { "\($0)" }),
-                code: payload["code"].map { "\($0)" },
-                message: payload["msg"] as? String,
-                status: status
-            )
-        }
-        if payload.keys.contains("code"), let data = payload["data"] as? [String: Any] {
-            return data
-        }
-        return payload
-    }
-
-}
-
-private final class RealtimeClient: CentrifugeClientDelegate {
-    private var client: CentrifugeClient?
-    private let emit: (HermesLiveChatEvent) -> Void
-
-    init(emit: @escaping (HermesLiveChatEvent) -> Void) {
-        self.emit = emit
-    }
-
-    func connect(url: URL, token: String) {
-        disconnect()
-        let config = CentrifugeClientConfig(token: token)
-        let client = CentrifugeClient(endpoint: url.absoluteString, config: config, delegate: self)
-        self.client = client
-        client.connect()
-    }
-
-    func disconnect() {
-        client?.disconnect()
-        client = nil
-        emit(.connectionStateChanged(.idle))
-    }
-
-    func onConnecting(_ client: CentrifugeClient, _ event: CentrifugeConnectingEvent) {
-        emit(.connectionStateChanged(.connecting))
-    }
-
-    func onConnected(_ client: CentrifugeClient, _ event: CentrifugeConnectedEvent) {
-        emit(.connectionStateChanged(.connected))
-    }
-
-    func onDisconnected(_ client: CentrifugeClient, _ event: CentrifugeDisconnectedEvent) {
-        emit(.connectionStateChanged(.disconnected))
-    }
-
-    func onPublication(_ client: CentrifugeClient, _ event: CentrifugeServerPublicationEvent) {
-        guard let json = try? JSONSerialization.jsonObject(with: event.data) as? [String: Any] else { return }
-        HermesLiveChat.shared.handlePublication(json)
-    }
-
-    func onError(_ client: CentrifugeClient, _ event: CentrifugeErrorEvent) {
-        emit(.error(HermesLiveChatException(error: .unknown, code: nil, message: "\(event.error)", status: nil)))
-    }
-}
-
-private struct StoredSession: Codable {
-    let appKey: String
-    let visitorId: String
-    let contactId: Int
-    let token: String
-    let tokenExp: Int
-    let realtimeUrl: URL?
-    let lastConversationId: String?
-}
-
-private extension StoredSession {
-    func toVisitorSession(defaultRealtimeUrl: URL) -> VisitorSession {
-        VisitorSession(
-            visitorId: visitorId,
-            contactId: contactId,
-            tokenExp: tokenExp,
-            realtimeUrl: realtimeUrl ?? defaultRealtimeUrl
-        )
-    }
-}
-
-private final class SessionStore {
-    private let service = "com.mobene.hermes.livechat.session"
-
-    func load(appKey: String) -> StoredSession? {
-        if let data = KeychainStore.read(service: service, account: appKey) {
-            return try? JSONDecoder().decode(StoredSession.self, from: data)
-        }
-        let legacyKey = userDefaultsKey(appKey)
-        guard let data = UserDefaults.standard.data(forKey: legacyKey),
-              let session = try? JSONDecoder().decode(StoredSession.self, from: data)
-        else { return nil }
-        save(session)
-        return session
-    }
-
-    func save(_ session: StoredSession) {
-        if let data = try? JSONEncoder().encode(session) {
-            if KeychainStore.write(data, service: service, account: session.appKey) {
-                UserDefaults.standard.removeObject(forKey: userDefaultsKey(session.appKey))
-            }
-        }
-    }
-
-    private func userDefaultsKey(_ appKey: String) -> String {
-        "hermes.livechat.session.\(appKey)"
-    }
-}
-
-private enum KeychainStore {
-    static func read(service: String, account: String) -> Data? {
-        var query = baseQuery(service: service, account: account)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess else { return nil }
-        return item as? Data
-    }
-
-    static func write(_ data: Data, service: String, account: String) -> Bool {
-        let status = SecItemUpdate(
-            baseQuery(service: service, account: account) as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
-        )
-        if status == errSecSuccess { return true }
-        if status != errSecItemNotFound { return false }
-
-        var query = baseQuery(service: service, account: account)
-        query[kSecValueData as String] = data
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
-    }
-
-    private static func baseQuery(service: String, account: String) -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-    }
-}
-
-public final class HermesLiveChatLauncher {
-    public static func present(
-        from viewController: UIViewController,
-        identity: VisitorIdentity,
-        title: String = "在线客服",
-        locale: String? = nil,
-        startSessionOnOpen: Bool = false
-    ) {
-        let page = HermesLiveChatViewController(
-            identity: identity,
-            title: title,
-            locale: locale,
-            startSessionOnOpen: startSessionOnOpen
-        )
-        viewController.navigationController?.pushViewController(page, animated: true)
-            ?? viewController.present(UINavigationController(rootViewController: page), animated: true)
-    }
-}
-
-public final class HermesLiveChatViewController: UIViewController {
-    private let identity: VisitorIdentity
-    private let locale: String?
-    private let startSessionOnOpen: Bool
-    private let scroll = UIScrollView()
-    private let stack = UIStackView()
-    private let input = UITextField()
-    private let composer = UIStackView()
-    private var composerBottomConstraint: NSLayoutConstraint?
-    private var keyboardObservers: [NSObjectProtocol] = []
-    private var messageKeys = Set<String>()
-    private var readMarkedMessageIds = Set<String>()
-    private var started = false
-    private var eventsTask: Task<Void, Never>?
-    private var welcomePlaceholder: UIView?
-    private var hasPersistedWelcome = false
-    private static let bubbleMaxWidthRatio: CGFloat = 0.78
-    private static let bubbleMaxWidthCap: CGFloat = 520
-
-    public init(
-        identity: VisitorIdentity,
-        title: String = "在线客服",
-        locale: String? = nil,
-        startSessionOnOpen: Bool = false
-    ) {
-        self.identity = identity
-        self.locale = locale
-        self.startSessionOnOpen = startSessionOnOpen
-        super.init(nibName: nil, bundle: nil)
-        self.title = title
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    public override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .systemBackground
-        buildUI()
-        observeKeyboard()
-        observeEvents()
-        Task {
-            if startSessionOnOpen {
-                await ensureSession()
-            }
-            if !startSessionOnOpen || !started {
-                await loadWelcome()
-            }
-        }
-    }
-
-    public override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        if isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true {
-            eventsTask?.cancel()
-        }
-    }
-
-    deinit {
-        eventsTask?.cancel()
-        keyboardObservers.forEach(NotificationCenter.default.removeObserver)
-    }
-
-    private func buildUI() {
-        stack.axis = .vertical
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        scroll.alwaysBounceVertical = true
-        scroll.keyboardDismissMode = .interactive
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.addSubview(stack)
-        let tap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
-        tap.cancelsTouchesInView = false
-        scroll.addGestureRecognizer(tap)
-        view.addSubview(scroll)
-        input.placeholder = "输入消息"
-        input.borderStyle = .roundedRect
-        input.returnKeyType = .send
-        input.delegate = self
-        input.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let send = UIButton(type: .system)
-        send.setTitle("发送", for: .normal)
-        send.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
-        composer.axis = .horizontal
-        composer.spacing = 8
-        composer.translatesAutoresizingMaskIntoConstraints = false
-        composer.addArrangedSubview(input)
-        composer.addArrangedSubview(send)
-        view.addSubview(composer)
-        let bottom = composer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8)
-        composerBottomConstraint = bottom
-        NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: composer.topAnchor),
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 12),
-            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -16),
-            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -12),
-            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32),
-            composer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-            composer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            bottom,
-        ])
-    }
-
-    private func observeKeyboard() {
-        let center = NotificationCenter.default
-        keyboardObservers = [
-            center.addObserver(
-                forName: UIResponder.keyboardWillChangeFrameNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                self?.handleKeyboard(notification)
-            },
-            center.addObserver(
-                forName: UIResponder.keyboardWillHideNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                self?.handleKeyboard(notification)
-            },
-        ]
-    }
-
-    private func handleKeyboard(_ notification: Notification) {
-        guard
-            let userInfo = notification.userInfo,
-            let endFrame = userInfo[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
-        else { return }
-        let keyboardFrame = view.convert(endFrame, from: nil)
-        let overlap = max(0, view.bounds.maxY - keyboardFrame.minY - view.safeAreaInsets.bottom)
-        composerBottomConstraint?.constant = -8 - overlap
-        let duration = (userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
-        let curve = (userInfo[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
-        let options = UIView.AnimationOptions(rawValue: curve << 16)
-        UIView.animate(
-            withDuration: duration,
-            delay: 0,
-            options: [options, .beginFromCurrentState]
-        ) {
-            self.view.layoutIfNeeded()
-            self.scrollToBottom(animated: false)
-        }
-    }
-
-    private func observeEvents() {
-        eventsTask = Task {
-            for await event in HermesLiveChat.shared.events() {
-                await MainActor.run {
-                    switch event {
-                    case .messageReceived(let message, _):
-                        addMessage(message)
-                    case .conversationUpdated(let conversation):
-                        if conversation.status == "closed" { started = false }
-                    case .error(let error):
-                        addSystem(error.message ?? "\(error.error)")
-                    default:
-                        break
-                    }
-                }
-            }
-        }
-    }
-
-    private func loadWelcome() async {
-        do {
-            let welcome = try await HermesLiveChat.shared.prefetchWelcome(locale: locale)
-            if !welcome.isEmpty { await MainActor.run { showWelcomePlaceholder(welcome) } }
-        } catch {
-            await MainActor.run { addSystem("加载欢迎语失败") }
-        }
-    }
-
-    private func ensureSession() async {
-        guard !started else { return }
-        do {
-            try await HermesLiveChat.shared.startSession(identity)
-            started = true
-            if let id = HermesLiveChat.shared.currentConversationId {
-                let messages = try await HermesLiveChat.shared.history(conversationId: id)
-                await MainActor.run { messages.forEach(addMessage) }
-            }
-        } catch {
-            await MainActor.run { addSystem("初始化会话失败") }
-        }
-    }
-
-    @objc private func sendTapped() {
-        let text = input.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !text.isEmpty else { return }
-        input.text = ""
-        Task {
-            await ensureSession()
-            do {
-                let messages = try await HermesLiveChat.shared.sendTextMessages(text)
-                await MainActor.run { messages.forEach(addMessage) }
-            } catch {
-                await MainActor.run {
-                    input.text = text
-                    addSystem("发送失败")
-                }
-            }
-        }
-    }
-
-    @objc private func dismissKeyboard() {
-        view.endEditing(true)
-    }
-
-    private func addSystem(_ text: String) {
-        addBubble(text, mine: false, createdAt: nil)
-    }
-
-    private func showWelcomePlaceholder(_ text: String) {
-        guard !hasPersistedWelcome else { return }
-        guard messageKeys.isEmpty else { return }
-        guard welcomePlaceholder == nil else { return }
-        welcomePlaceholder = addBubble(text, mine: false, createdAt: nil)
-    }
-
-    private func removeWelcomePlaceholder() {
-        guard let view = welcomePlaceholder else { return }
-        stack.removeArrangedSubview(view)
-        view.removeFromSuperview()
-        welcomePlaceholder = nil
-    }
-
-    private func addMessage(_ message: Message) {
-        if let key = messageKey(message), !messageKeys.insert(key).inserted {
-            return
-        }
-        if message.contentType == "welcome" {
-            hasPersistedWelcome = true
-            removeWelcomePlaceholder()
-        }
-        addBubble(message.displayText, mine: message.senderType == "visitor", createdAt: message.createdAt)
-        markMessageReadIfNeeded(message)
-    }
-
-    private func markMessageReadIfNeeded(_ message: Message) {
-        guard message.senderType != "visitor" else { return }
-        guard message.readAt == nil else { return }
-        let messageId = message.uuid.trimmingCharacters(in: .whitespacesAndNewlines)
-        let conversationId = message.conversationId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !messageId.isEmpty, !conversationId.isEmpty else { return }
-        guard readMarkedMessageIds.insert(messageId).inserted else { return }
-
-        Task { [weak self] in
-            do {
-                try await HermesLiveChat.shared.markRead(conversationId: conversationId, messageId: messageId)
-            } catch {
-                await MainActor.run {
-                    self?.readMarkedMessageIds.remove(messageId)
-                }
-            }
-        }
-    }
-
-    private func messageKey(_ message: Message) -> String? {
-        let uuid = message.uuid.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !uuid.isEmpty { return uuid }
-        let clientMsgId = message.clientMsgId.trimmingCharacters(in: .whitespacesAndNewlines)
-        return clientMsgId.isEmpty ? nil : clientMsgId
-    }
-
-    @discardableResult
-    private func addBubble(_ text: String, mine: Bool, createdAt: Int?) -> UIView {
-        let label = UILabel()
-        label.text = text
-        label.numberOfLines = 0
-        label.textAlignment = .natural
-        label.font = .preferredFont(forTextStyle: .body)
-        label.adjustsFontForContentSizeCategory = true
-        label.lineBreakMode = .byWordWrapping
-        label.textColor = mine ? .white : .label
-        label.setContentHuggingPriority(.required, for: .vertical)
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let bubble = UIView()
-        bubble.translatesAutoresizingMaskIntoConstraints = false
-        bubble.backgroundColor = mine ? .systemBlue : .secondarySystemBackground
-        bubble.layer.cornerRadius = 17
-        bubble.layer.masksToBounds = true
-        bubble.addSubview(label)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 8),
-            label.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -12),
-            label.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -8),
-        ])
-
-        let column = UIStackView()
-        column.axis = .vertical
-        column.spacing = 2
-        column.alignment = mine ? .trailing : .leading
-        column.translatesAutoresizingMaskIntoConstraints = false
-        column.addArrangedSubview(bubble)
-
-        if let createdAt = createdAt, createdAt > 0 {
-            let time = UILabel()
-            time.text = Self.formatTime(createdAt)
-            time.font = .systemFont(ofSize: 11)
-            time.textColor = .secondaryLabel
-            column.addArrangedSubview(time)
-        }
-
-        let row = UIView()
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(column)
-        stack.addArrangedSubview(row)
-
-        let widthByScreen = column.widthAnchor.constraint(
-            lessThanOrEqualTo: row.widthAnchor,
-            multiplier: Self.bubbleMaxWidthRatio
-        )
-        let widthCap = column.widthAnchor.constraint(lessThanOrEqualToConstant: Self.bubbleMaxWidthCap)
-        let bubbleWidth = bubble.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor)
-        var constraints = [
-            column.topAnchor.constraint(equalTo: row.topAnchor),
-            column.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-            widthByScreen,
-            widthCap,
-            bubbleWidth,
-        ]
-        if mine {
-            constraints.append(column.trailingAnchor.constraint(equalTo: row.trailingAnchor))
-            constraints.append(column.leadingAnchor.constraint(greaterThanOrEqualTo: row.leadingAnchor))
-        } else {
-            constraints.append(column.leadingAnchor.constraint(equalTo: row.leadingAnchor))
-            constraints.append(column.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor))
-        }
-        NSLayoutConstraint.activate(constraints)
-        scrollToBottom()
-        return row
-    }
-
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MM-dd HH:mm"
-        return formatter
-    }()
-
-    private static func formatTime(_ seconds: Int) -> String {
-        timeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(seconds)))
-    }
-
-    private func scrollToBottom(animated: Bool = true) {
-        view.layoutIfNeeded()
-        let maxOffsetY = max(
-            -scroll.adjustedContentInset.top,
-            scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
-        )
-        scroll.setContentOffset(CGPoint(x: 0, y: maxOffsetY), animated: animated)
-    }
-}
-
-extension HermesLiveChatViewController: UITextFieldDelegate {
-    public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        sendTapped()
-        return false
-    }
-}
-
-private extension Conversation {
-    static func from(_ json: [String: Any]) -> Conversation {
-        Conversation(
-            uuid: json["uuid"] as? String ?? "",
-            status: json["status"] as? String ?? "",
-            channelType: json["channel_type"] as? String ?? "",
-            channelId: json["channel_id"] as? String ?? ""
-        )
-    }
-}
-
-private extension Message {
-    static func from(_ json: [String: Any]) -> Message {
-        Message(
-            uuid: json["uuid"] as? String ?? "",
-            conversationId: json["conversation_id"] as? String ?? "",
-            clientMsgId: json["client_msg_id"] as? String ?? "",
-            senderType: json["sender_type"] as? String ?? "",
-            senderId: json["sender_id"] as? String ?? "",
-            contentType: json["content_type"] as? String ?? "",
-            content: json["content"] as? [String: Any] ?? [:],
-            readAt: json["read_at"] as? Int,
-            createdAt: json["created_at"] as? Int ?? 0
-        )
-    }
-}
-
-private extension URL {
-    func liveChatAppendingPath(_ rawPath: String) -> URL {
-        var url = self
-        rawPath.split(separator: "/").forEach { url.appendPathComponent(String($0)) }
-        return url
-    }
-}
-
-private extension String {
-    var urlEncoded: String {
-        addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? self
-    }
-}
-
-private func defaultImageFilename(mimeType: String) -> String {
-    "image_\(UUID().uuidString.replacingOccurrences(of: "-", with: "")).\(imageExtension(mimeType: mimeType))"
-}
-
-private func newClientMsgId() -> String {
-    UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-}
-
-private func messageEnvelope(_ json: [String: Any]) -> [String: Any] {
-    json["message"] as? [String: Any] ?? json
-}
-
-private func imageExtension(mimeType: String) -> String {
-    switch mimeType.lowercased() {
-    case "image/png": return "png"
-    case "image/gif": return "gif"
-    default: return "jpg"
-    }
-}
-
-private func mapBackendError(status: Int, code: String?) -> HermesLiveChatError {
-    switch code {
-    case "70001": return .badRequest
-    case "70002", "LC_TOKEN_INVALID": return .tokenInvalid
-    case "70003", "LC_TOKEN_EXPIRED": return .tokenExpired
-    case "70004", "LC_INVALID_VISITOR_ID": return .invalidVisitorId
-    case "70024", "LC_CONV_FORBIDDEN": return .conversationForbidden
-    case "70025", "LC_CONV_CLOSED": return .conversationClosed
-    case "LC_MESSAGE_RATE_LIMITED": return .messageRateLimited
-    case "LC_CONTENT_INVALID": return .contentInvalid
-    case "70030", "LC_ATTACHMENT_TOO_LARGE": return .attachmentTooLarge
-    case "70031", "LC_ATTACHMENT_TYPE_INVALID", "LC_ATTACHMENT_TYPE_NOT_ALLOWED": return .attachmentTypeInvalid
-    case "70011", "LC_CHANNEL_DISABLED": return .channelDisabled
-    case "70012", "LC_DOMAIN_NOT_ALLOWED": return .domainNotAllowed
-    case "70010", "LC_ORG_LIVECHAT_DISABLED": return .orgDisabled
-    case "70006", "LC_APP_INIT_TOKEN_INVALID": return .appInitTokenInvalid
-    case "70007", "LC_APP_INIT_TOKEN_EXPIRED": return .appInitTokenExpired
-    case "LC_REALTIME_CONNECT_UNAUTHORIZED": return .realtimeConnectUnauthorized
-    case "70050", "LC_REALTIME_PROVIDER_UNAVAILABLE": return .realtimeProviderUnavailable
-    default:
-        if status == 400 { return .badRequest }
-        if status == 401 { return .tokenInvalid }
-        if status == 403 { return .conversationForbidden }
-        if status >= 500 { return .realtimeProviderUnavailable }
-        return .unknown
     }
 }

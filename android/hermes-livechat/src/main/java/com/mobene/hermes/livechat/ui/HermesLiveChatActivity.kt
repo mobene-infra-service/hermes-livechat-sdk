@@ -95,7 +95,14 @@ class HermesLiveChatActivity : Activity() {
             setBackgroundColor(SCREEN_BACKGROUND)
         }
         root.addView(buildHeader(), LinearLayout.LayoutParams.MATCH_PARENT, dp(56))
+        root.addView(buildScrollContainer(), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(buildComposer(), LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        setContentView(root)
+        applyInsets(root)
+        status.tag = "status"
+    }
 
+    private fun buildScrollContainer(): ScrollView {
         scroll = ScrollView(this).apply {
             isFillViewport = true
             clipToPadding = false
@@ -112,14 +119,10 @@ class HermesLiveChatActivity : Activity() {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
             ),
         )
-        root.addView(
-            scroll,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f,
-            ),
-        )
+        return scroll
+    }
+
+    private fun buildComposer(): LinearLayout {
         composer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
@@ -129,56 +132,56 @@ class HermesLiveChatActivity : Activity() {
                 elevation = dp(8).toFloat()
             }
         }
-        input = EditText(this).apply {
-            hint = "输入消息"
-            textSize = 15f
-            setTextColor(TEXT_PRIMARY)
-            setHintTextColor(TEXT_MUTED)
-            background = rounded(
-                color = Color.WHITE,
-                strokeColor = BORDER,
-                strokeWidth = dp(1),
-                radius = dp(20).toFloat(),
-            )
-            setPadding(dp(16), dp(9), dp(16), dp(9))
-            minHeight = dp(42)
-            setSingleLine(false)
-            maxLines = 4
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            imeOptions = EditorInfo.IME_ACTION_SEND or EditorInfo.IME_FLAG_NO_EXTRACT_UI
-            setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_SEND) {
-                    sendText()
-                    true
-                } else {
-                    false
-                }
-            }
-        }
-        val send = Button(this).apply {
-            text = "发送"
-            textSize = 14f
-            setTextColor(Color.WHITE)
-            minWidth = dp(64)
-            minHeight = dp(42)
-            minimumHeight = 0
-            minimumWidth = 0
-            background = rounded(PRIMARY, radius = dp(20).toFloat())
-            setOnClickListener { sendText() }
-        }
+        input = buildInputField()
         composer.addView(
             input,
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                 marginEnd = dp(10)
             },
         )
-        composer.addView(send, LinearLayout.LayoutParams(dp(64), dp(42)))
-        root.addView(composer, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        setContentView(root)
-        applyInsets(root)
-        status.tag = "status"
+        composer.addView(buildSendButton(), LinearLayout.LayoutParams(dp(64), dp(42)))
+        return composer
+    }
+
+    private fun buildInputField(): EditText = EditText(this).apply {
+        hint = "输入消息"
+        textSize = 15f
+        setTextColor(TEXT_PRIMARY)
+        setHintTextColor(TEXT_MUTED)
+        background = rounded(
+            color = Color.WHITE,
+            strokeColor = BORDER,
+            strokeWidth = dp(1),
+            radius = dp(20).toFloat(),
+        )
+        setPadding(dp(16), dp(9), dp(16), dp(9))
+        minHeight = dp(42)
+        setSingleLine(false)
+        maxLines = 4
+        inputType = InputType.TYPE_CLASS_TEXT or
+            InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+            InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        imeOptions = EditorInfo.IME_ACTION_SEND or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                sendText()
+                true
+            } else {
+                false
+            }
+        }
+    }
+
+    private fun buildSendButton(): Button = Button(this).apply {
+        text = "发送"
+        textSize = 14f
+        setTextColor(Color.WHITE)
+        minWidth = dp(64)
+        minHeight = dp(42)
+        minimumHeight = 0
+        minimumWidth = 0
+        background = rounded(PRIMARY, radius = dp(20).toFloat())
+        setOnClickListener { sendText() }
     }
 
     private fun buildHeader(): LinearLayout {
@@ -385,42 +388,47 @@ class HermesLiveChatActivity : Activity() {
     }
 
     private fun addBubble(text: String, mine: Boolean, createdAt: Long? = null): View {
-        val row = LinearLayout(this).apply {
-            gravity = if (mine) Gravity.END else Gravity.START
-            setPadding(dp(16), dp(4), dp(16), dp(4))
-        }
-        val column = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = if (mine) Gravity.END else Gravity.START
-        }
-        val bubble = TextView(this).apply {
-            this.text = text
-            textSize = 15f
-            setTextColor(if (mine) Color.WHITE else TEXT_PRIMARY)
-            setLineSpacing(dp(2).toFloat(), 1.0f)
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            maxWidth = (resources.displayMetrics.widthPixels * 0.78f).toInt()
-            background = rounded(
-                color = if (mine) PRIMARY else Color.WHITE,
-                strokeColor = if (mine) PRIMARY else BORDER,
-                strokeWidth = if (mine) 0 else dp(1),
-                radius = dp(16).toFloat(),
-            )
-        }
-        column.addView(bubble)
-        if (createdAt != null && createdAt > 0) {
-            val time = TextView(this).apply {
-                this.text = formatTime(createdAt)
-                textSize = 11f
-                setTextColor(TEXT_MUTED)
-                setPadding(dp(4), dp(4), dp(4), 0)
-            }
-            column.addView(time)
+        val row = bubbleRow(mine)
+        val column = bubbleColumn(mine).apply {
+            addView(bubbleLabel(text, mine))
+            if (createdAt != null && createdAt > 0) addView(bubbleTimestamp(createdAt))
         }
         row.addView(column)
         messages.addView(row)
         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
         return row
+    }
+
+    private fun bubbleRow(mine: Boolean) = LinearLayout(this).apply {
+        gravity = if (mine) Gravity.END else Gravity.START
+        setPadding(dp(16), dp(4), dp(16), dp(4))
+    }
+
+    private fun bubbleColumn(mine: Boolean) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = if (mine) Gravity.END else Gravity.START
+    }
+
+    private fun bubbleLabel(text: String, mine: Boolean) = TextView(this).apply {
+        this.text = text
+        textSize = 15f
+        setTextColor(if (mine) Color.WHITE else TEXT_PRIMARY)
+        setLineSpacing(dp(2).toFloat(), 1.0f)
+        setPadding(dp(14), dp(10), dp(14), dp(10))
+        maxWidth = (resources.displayMetrics.widthPixels * 0.78f).toInt()
+        background = rounded(
+            color = if (mine) PRIMARY else Color.WHITE,
+            strokeColor = if (mine) PRIMARY else BORDER,
+            strokeWidth = if (mine) 0 else dp(1),
+            radius = dp(16).toFloat(),
+        )
+    }
+
+    private fun bubbleTimestamp(createdAt: Long) = TextView(this).apply {
+        text = formatTime(createdAt)
+        textSize = 11f
+        setTextColor(TEXT_MUTED)
+        setPadding(dp(4), dp(4), dp(4), 0)
     }
 
     private fun formatTime(seconds: Long): String =
