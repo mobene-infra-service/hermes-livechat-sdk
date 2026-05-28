@@ -14,9 +14,10 @@ ios/hermes-livechat/build/
 ios/hermes-livechat/build-iphoneos/
 ios/hermes-livechat/DerivedData/
 ios/hermes-livechat/.spm-cache/
-ios/hermes-livechat/**/*.xcuserstate
-ios/hermes-livechat/**/*.xcuserdata/
-ios/hermes-livechat/**/*.xcarchive/
+ios/.swiftpm/
+ios/**/*.xcuserstate
+ios/**/xcuserdata/
+ios/**/*.xcarchive/
 
 # Flutter
 flutter/.dart_tool/

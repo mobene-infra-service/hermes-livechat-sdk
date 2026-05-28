@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 60;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -111,7 +111,6 @@
 			packageReferences = (
 				0A1B2C3D4E5F600000000302 /* XCLocalSwiftPackageReference ".." */,
 			);
-			preferredProjectObjectVersion = 77;
 			productRefGroup = 0A1B2C3D4E5F600000000403 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -265,16 +264,17 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 3A7Q7J85TS;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "hermes-livechat/Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.mobene.hermes.livechat.sample.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = "livechat-demo.hermesomni.com";
 				PRODUCT_MODULE_NAME = hermeslivechat;
 				PRODUCT_NAME = "hermes-livechat";
 				SWIFT_VERSION = 5.9;
@@ -287,16 +287,17 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 3A7Q7J85TS;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "hermes-livechat/Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.mobene.hermes.livechat.sample.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = "livechat-demo.hermesomni.com";
 				PRODUCT_MODULE_NAME = hermeslivechat;
 				PRODUCT_NAME = "hermes-livechat";
 				SWIFT_VERSION = 5.9;
