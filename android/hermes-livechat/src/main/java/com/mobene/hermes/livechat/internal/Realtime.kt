@@ -17,7 +17,7 @@ import org.json.JSONObject
 
 internal class CentrifugeRealtime(
     private val emit: (HermesLiveChatEvent) -> Unit,
-    private val onPublication: (JSONObject) -> Unit,
+    private val onPublicationReceived: (JSONObject) -> Unit,
 ) {
     private var client: Client? = null
 
@@ -46,7 +46,7 @@ internal class CentrifugeRealtime(
 
             override fun onPublication(client: Client, event: ServerPublicationEvent) {
                 val raw = String(event.data, StandardCharsets.UTF_8)
-                runCatching { onPublication(JSONObject(raw)) }
+                runCatching { onPublicationReceived(JSONObject(raw)) }
             }
         })
         client?.connect()

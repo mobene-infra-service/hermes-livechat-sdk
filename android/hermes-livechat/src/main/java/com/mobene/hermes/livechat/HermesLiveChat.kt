@@ -49,7 +49,7 @@ object HermesLiveChat {
         store = SessionStore(context.applicationContext)
         realtime = CentrifugeRealtime(
             emit = { emitRealtimeEvent(it) },
-            onPublication = { handlePublication(it) },
+            onPublicationReceived = { handlePublication(it) },
         )
         currentConversationId = null
         stored = null

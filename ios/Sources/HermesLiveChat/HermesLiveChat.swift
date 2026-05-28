@@ -76,9 +76,10 @@ public final class HermesLiveChat {
 
     private func sendTextResult(_ text: String, conversationId: String? = nil) async throws -> SendMessageResult {
         let token = try await validToken()
+        let api = try requireApi()
         let clientMsgId = newClientMsgId()
         try ensureRealtimeConnected(token: token)
-        let result = try await retryOnConversationClosed(conversationId) { [api = try requireApi()] convId in
+        let result = try await retryOnConversationClosed(conversationId) { convId in
             try await api.sendText(token: token, conversationId: convId, text: text, clientMsgId: clientMsgId)
         }
         return handleSendResult(result)
