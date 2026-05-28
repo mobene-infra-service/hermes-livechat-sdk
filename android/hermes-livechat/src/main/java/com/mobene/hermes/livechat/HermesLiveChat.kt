@@ -288,10 +288,15 @@ object HermesLiveChat {
 
     suspend fun startSession(identity: VisitorIdentity): VisitorSession {
         val cfg = requireConfig()
-        val cached = store?.load(cfg.appKey)
-        currentConversationId = cached?.lastConversationId
-        val oldToken = cached?.takeIf { !isExpired(it.tokenExp) }?.token
-        val json = requireApi().init(identity, oldToken)
+        val cached = stored ?: store?.load(cfg.appKey)
+        currentConversationId = currentConversationId ?: cached?.lastConversationId
+        if (cached != null && !isExpired(cached.tokenExp)) {
+            stored = cached
+            connectRealtime(cached.realtimeUrl ?: cfg.realtimeUrl, cached.token)
+            return cached.toVisitorSession(cfg.realtimeUrl)
+        }
+
+        val json = requireApi().init(identity, cached?.token)
         val realtimeUrl = json.optJSONObject("realtime")?.optString("url")?.takeIf { it.isNotEmpty() }
             ?: cfg.realtimeUrl
         val next = StoredSession(
@@ -307,7 +312,7 @@ object HermesLiveChat {
         store?.save(next)
         refreshCurrentConversation(next.token)
         connectRealtime(realtimeUrl, next.token)
-        return VisitorSession(next.visitorId, next.contactId, next.tokenExp, realtimeUrl)
+        return next.toVisitorSession(cfg.realtimeUrl)
     }
 
     suspend fun sendText(text: String, conversationId: String? = null): Message =
@@ -856,6 +861,13 @@ private data class StoredSession(
     val tokenExp: Long,
     val realtimeUrl: String?,
     val lastConversationId: String?,
+)
+
+private fun StoredSession.toVisitorSession(defaultRealtimeUrl: String) = VisitorSession(
+    visitorId = visitorId,
+    contactId = contactId,
+    tokenExp = tokenExp,
+    realtimeUrl = realtimeUrl ?: defaultRealtimeUrl,
 )
 
 private class SessionStore(context: Context) {

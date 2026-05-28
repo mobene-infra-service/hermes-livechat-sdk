@@ -179,7 +179,7 @@ void main() {
       await session.destroy();
     });
 
-    test('reuses cached visitor token when not expired', () async {
+    test('reuses cached visitor token without init when not expired', () async {
       final config = _baseConfig();
       final store = _MemoryStore();
       final future = DateTime.now()
@@ -193,6 +193,7 @@ void main() {
           contactId: 12345,
           token: 'cached_token',
           tokenExp: future,
+          realtimeUrl: 'wss://cached.example.com/connection/websocket',
           lastConversationId: 'conv_cached',
         ),
       );
@@ -205,10 +206,20 @@ void main() {
         store: store,
       );
 
+      final result = await session.startSession(const VisitorIdentity());
       await session.startSession(const VisitorIdentity());
 
-      expect(api.lastOldVisitorToken, 'cached_token');
+      expect(api.initCalls, 0);
+      expect(api.lastOldVisitorToken, isNull);
       expect(session.currentConversationId, 'conv_cached');
+      expect(result.visitorId, 'v_1');
+      expect(result.contactId, 12345);
+      expect(
+        result.realtimeUrl,
+        'wss://cached.example.com/connection/websocket',
+      );
+      expect(transport.connectCalls, 1);
+      expect(transport.lastToken, 'cached_token');
 
       await session.destroy();
     });

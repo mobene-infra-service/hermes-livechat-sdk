@@ -222,10 +222,15 @@ public final class HermesLiveChat {
     @discardableResult
     public func startSession(_ identity: VisitorIdentity) async throws -> VisitorSession {
         let cfg = try requireConfig()
-        let cached = store.load(appKey: cfg.appKey)
-        currentConversationId = cached?.lastConversationId
-        let oldToken = cached.flatMap { isExpired($0.tokenExp) ? nil : $0.token }
-        let json = try await requireApi().initSession(identity: identity, oldVisitorToken: oldToken)
+        let cached = stored ?? store.load(appKey: cfg.appKey)
+        currentConversationId = currentConversationId ?? cached?.lastConversationId
+        if let cached, !isExpired(cached.tokenExp) {
+            stored = cached
+            connectRealtime(url: cached.realtimeUrl ?? cfg.realtimeUrl, token: cached.token)
+            return cached.toVisitorSession(defaultRealtimeUrl: cfg.realtimeUrl)
+        }
+
+        let json = try await requireApi().initSession(identity: identity, oldVisitorToken: cached?.token)
         let realtimeUrl = ((json["realtime"] as? [String: Any])?["url"] as? String)
             .flatMap(URL.init(string:)) ?? cfg.realtimeUrl
         let session = StoredSession(
@@ -241,12 +246,7 @@ public final class HermesLiveChat {
         store.save(session)
         await refreshCurrentConversation(token: session.token)
         connectRealtime(url: realtimeUrl, token: session.token)
-        return VisitorSession(
-            visitorId: session.visitorId,
-            contactId: session.contactId,
-            tokenExp: session.tokenExp,
-            realtimeUrl: realtimeUrl
-        )
+        return session.toVisitorSession(defaultRealtimeUrl: cfg.realtimeUrl)
     }
 
     public func sendText(_ text: String, conversationId: String? = nil) async throws -> Message {
@@ -818,6 +818,17 @@ private struct StoredSession: Codable {
     let tokenExp: Int
     let realtimeUrl: URL?
     let lastConversationId: String?
+}
+
+private extension StoredSession {
+    func toVisitorSession(defaultRealtimeUrl: URL) -> VisitorSession {
+        VisitorSession(
+            visitorId: visitorId,
+            contactId: contactId,
+            tokenExp: tokenExp,
+            realtimeUrl: realtimeUrl ?? defaultRealtimeUrl
+        )
+    }
 }
 
 private final class SessionStore {

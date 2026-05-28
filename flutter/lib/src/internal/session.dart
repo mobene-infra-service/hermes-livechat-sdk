@@ -69,13 +69,20 @@ class Session {
   }
 
   Future<VisitorSession> startSession(VisitorIdentity identity) async {
-    final cached = await store.load(config.appKey);
-    _currentConversationId = cached?.lastConversationId;
-    final canReuse = cached != null && !_isExpired(cached.tokenExp);
+    final cached = _stored ?? await store.load(config.appKey);
+    _currentConversationId ??= cached?.lastConversationId;
+    if (cached != null && !_isExpired(cached.tokenExp)) {
+      _stored = cached;
+      await _connectTransport(
+        cached.realtimeUrl ?? config.realtimeUrl,
+        cached.token,
+      );
+      return _visitorSession(cached);
+    }
 
     final json = await api.init(
       identity: identity,
-      oldVisitorToken: canReuse ? cached.token : null,
+      oldVisitorToken: cached?.token,
     );
 
     final visitorId = json['visitor_id'] as String;
@@ -100,12 +107,7 @@ class Session {
     await _refreshCurrentConversation(token);
 
     await _connectTransport(realtimeUrl, token);
-    return VisitorSession(
-      visitorId: visitorId,
-      contactId: contactId,
-      tokenExp: tokenExp,
-      realtimeUrl: realtimeUrl,
-    );
+    return _visitorSession(_stored!);
   }
 
   Future<Message> sendText(String text, {String? conversationId}) async {
@@ -425,6 +427,15 @@ class Session {
   bool _isExpired(int exp) {
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     return exp - now <= config.refreshLeewaySeconds;
+  }
+
+  VisitorSession _visitorSession(StoredSession session) {
+    return VisitorSession(
+      visitorId: session.visitorId,
+      contactId: session.contactId,
+      tokenExp: session.tokenExp,
+      realtimeUrl: session.realtimeUrl ?? config.realtimeUrl,
+    );
   }
 
   Future<SendMessageResult> _sendText(
