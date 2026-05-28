@@ -79,6 +79,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
   final _scroll = ScrollController();
   final _messages = <Message>[];
   final _messageKeys = <String>{};
+  final _readMarkedMessageIds = <String>{};
 
   StreamSubscription<HermesLiveChatEvent>? _events;
   ConnectionState _connectionState = ConnectionState.idle;
@@ -224,17 +225,6 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
         });
       case MessageReceived(:final message):
         _mergeMessages([message]);
-        if (message.senderType != 'visitor') {
-          final conversationId = message.conversationId;
-          unawaited(
-            _client
-                .markRead(
-                  conversationId: conversationId,
-                  messageId: message.uuid,
-                )
-                .catchError((_) {}),
-          );
-        }
       case ConversationUpdated(:final conversation):
         setState(() {
           _conversationClosed = false;
@@ -258,10 +248,32 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
       _messages.add(message);
       changed = true;
     }
-    if (!changed) return;
-    _messages.sort(_compareMessages);
-    setState(() {});
-    _scrollToBottom();
+    if (changed) {
+      _messages.sort(_compareMessages);
+      setState(() {});
+      _scrollToBottom();
+    }
+    _markVisibleMessagesRead();
+  }
+
+  void _markVisibleMessagesRead() {
+    for (final message in _messages) {
+      if (message.senderType == 'visitor') continue;
+      if (message.readAt != null) continue;
+      if (message.uuid.isEmpty || message.conversationId.isEmpty) continue;
+      if (!_readMarkedMessageIds.add(message.uuid)) continue;
+
+      unawaited(
+        _client
+            .markRead(
+          conversationId: message.conversationId,
+          messageId: message.uuid,
+        )
+            .catchError((_) {
+          _readMarkedMessageIds.remove(message.uuid);
+        }),
+      );
+    }
   }
 
   void _handleError(HermesLiveChatException error) {

@@ -47,6 +47,7 @@ class HermesLiveChatActivity : Activity() {
     private var started = false
     private var eventsJob: Job? = null
     private val messageKeys = mutableSetOf<String>()
+    private val readMarkedMessageIds = mutableSetOf<String>()
     private var welcomePlaceholder: View? = null
     private var hasPersistedWelcome = false
 
@@ -349,6 +350,24 @@ class HermesLiveChatActivity : Activity() {
 
         val text = messageDisplayText(message)
         addBubble(text, mine = message.senderType == "visitor", createdAt = message.createdAt)
+        markMessageReadIfNeeded(message)
+    }
+
+    private fun markMessageReadIfNeeded(message: Message) {
+        val messageId = message.uuid.trim()
+        val conversationId = message.conversationId.trim()
+        if (message.senderType == "visitor") return
+        if (message.readAt != null) return
+        if (messageId.isBlank() || conversationId.isBlank()) return
+        if (!readMarkedMessageIds.add(messageId)) return
+
+        scope.launch {
+            runCatching {
+                HermesLiveChat.markRead(conversationId, messageId)
+            }.onFailure {
+                readMarkedMessageIds.remove(messageId)
+            }
+        }
     }
 
     private fun messageDisplayText(message: Message): String {

@@ -133,6 +133,7 @@ public struct Message: Identifiable {
     public let senderId: String
     public let contentType: String
     public let content: [String: Any]
+    public let readAt: Int?
     public let createdAt: Int
 
     public var displayText: String {
@@ -923,6 +924,7 @@ public final class HermesLiveChatViewController: UIViewController {
     private var composerBottomConstraint: NSLayoutConstraint?
     private var keyboardObservers: [NSObjectProtocol] = []
     private var messageKeys = Set<String>()
+    private var readMarkedMessageIds = Set<String>()
     private var started = false
     private var eventsTask: Task<Void, Never>?
     private var welcomePlaceholder: UIView?
@@ -1152,6 +1154,26 @@ public final class HermesLiveChatViewController: UIViewController {
             removeWelcomePlaceholder()
         }
         addBubble(message.displayText, mine: message.senderType == "visitor", createdAt: message.createdAt)
+        markMessageReadIfNeeded(message)
+    }
+
+    private func markMessageReadIfNeeded(_ message: Message) {
+        guard message.senderType != "visitor" else { return }
+        guard message.readAt == nil else { return }
+        let messageId = message.uuid.trimmingCharacters(in: .whitespacesAndNewlines)
+        let conversationId = message.conversationId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !messageId.isEmpty, !conversationId.isEmpty else { return }
+        guard readMarkedMessageIds.insert(messageId).inserted else { return }
+
+        Task { [weak self] in
+            do {
+                try await HermesLiveChat.shared.markRead(conversationId: conversationId, messageId: messageId)
+            } catch {
+                await MainActor.run {
+                    self?.readMarkedMessageIds.remove(messageId)
+                }
+            }
+        }
     }
 
     private func messageKey(_ message: Message) -> String? {
@@ -1281,6 +1303,7 @@ private extension Message {
             senderId: json["sender_id"] as? String ?? "",
             contentType: json["content_type"] as? String ?? "",
             content: json["content"] as? [String: Any] ?? [:],
+            readAt: json["read_at"] as? Int,
             createdAt: json["created_at"] as? Int ?? 0
         )
     }
