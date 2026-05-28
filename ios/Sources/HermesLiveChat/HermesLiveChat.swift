@@ -893,6 +893,8 @@ public final class HermesLiveChatViewController: UIViewController {
     private var eventsTask: Task<Void, Never>?
     private var welcomePlaceholder: UIView?
     private var hasPersistedWelcome = false
+    private static let bubbleMaxWidthRatio: CGFloat = 0.78
+    private static let bubbleMaxWidthCap: CGFloat = 520
 
     public init(
         identity: VisitorIdentity,
@@ -1131,18 +1133,34 @@ public final class HermesLiveChatViewController: UIViewController {
         let label = UILabel()
         label.text = text
         label.numberOfLines = 0
-        label.textAlignment = mine ? .right : .left
-        label.backgroundColor = mine ? .systemBlue : .secondarySystemBackground
+        label.textAlignment = .natural
+        label.font = .preferredFont(forTextStyle: .body)
+        label.adjustsFontForContentSizeCategory = true
+        label.lineBreakMode = .byWordWrapping
         label.textColor = mine ? .white : .label
-        label.layer.cornerRadius = 10
-        label.layer.masksToBounds = true
         label.setContentHuggingPriority(.required, for: .vertical)
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let bubble = UIView()
+        bubble.translatesAutoresizingMaskIntoConstraints = false
+        bubble.backgroundColor = mine ? .systemBlue : .secondarySystemBackground
+        bubble.layer.cornerRadius = 17
+        bubble.layer.masksToBounds = true
+        bubble.addSubview(label)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 8),
+            label.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -12),
+            label.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -8),
+        ])
 
         let column = UIStackView()
         column.axis = .vertical
         column.spacing = 2
         column.alignment = mine ? .trailing : .leading
-        column.addArrangedSubview(label)
+        column.translatesAutoresizingMaskIntoConstraints = false
+        column.addArrangedSubview(bubble)
 
         if let createdAt = createdAt, createdAt > 0 {
             let time = UILabel()
@@ -1152,9 +1170,34 @@ public final class HermesLiveChatViewController: UIViewController {
             column.addArrangedSubview(time)
         }
 
-        stack.addArrangedSubview(column)
+        let row = UIView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(column)
+        stack.addArrangedSubview(row)
+
+        let widthByScreen = column.widthAnchor.constraint(
+            lessThanOrEqualTo: row.widthAnchor,
+            multiplier: Self.bubbleMaxWidthRatio
+        )
+        let widthCap = column.widthAnchor.constraint(lessThanOrEqualToConstant: Self.bubbleMaxWidthCap)
+        let bubbleWidth = bubble.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor)
+        var constraints = [
+            column.topAnchor.constraint(equalTo: row.topAnchor),
+            column.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+            widthByScreen,
+            widthCap,
+            bubbleWidth,
+        ]
+        if mine {
+            constraints.append(column.trailingAnchor.constraint(equalTo: row.trailingAnchor))
+            constraints.append(column.leadingAnchor.constraint(greaterThanOrEqualTo: row.leadingAnchor))
+        } else {
+            constraints.append(column.leadingAnchor.constraint(equalTo: row.leadingAnchor))
+            constraints.append(column.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor))
+        }
+        NSLayoutConstraint.activate(constraints)
         scrollToBottom()
-        return column
+        return row
     }
 
     private static let timeFormatter: DateFormatter = {
