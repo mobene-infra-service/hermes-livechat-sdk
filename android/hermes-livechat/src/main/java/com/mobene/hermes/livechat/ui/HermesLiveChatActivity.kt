@@ -439,8 +439,16 @@ class HermesLiveChatActivity : Activity() {
     private suspend fun startSessionAndLoadHistory() {
         HermesLiveChat.startSession(identity)
         started = true
-        HermesLiveChat.currentConversationId?.let { conversationId ->
+        val activeId = HermesLiveChat.currentConversationId
+        activeId?.let { conversationId ->
             HermesLiveChat.history(conversationId).forEach(::addMessage)
+        }
+        // Render the prefetched welcome whenever there is no active
+        // conversation — first visit, or the previous one is closed.
+        // Closed-conversation history may still be on screen, but that
+        // belongs to the prior chat; the new chat starts fresh.
+        if (activeId == null) {
+            loadWelcomeOnce()
         }
     }
 
@@ -449,8 +457,14 @@ class HermesLiveChatActivity : Activity() {
     }
 
     private fun showWelcomePlaceholder(text: String) {
-        if (hasPersistedWelcome) return
-        if (messageKeys.isNotEmpty()) return
+        // Skip the "already rendered a welcome / messages exist" guards when
+        // there is no active conversation — closed history from a prior chat
+        // should not suppress the greeting for the new one.
+        val hasActive = HermesLiveChat.currentConversationId != null
+        if (hasActive) {
+            if (hasPersistedWelcome) return
+            if (messageKeys.isNotEmpty()) return
+        }
         if (welcomePlaceholder != null) return
         welcomePlaceholder = addBubble(text, mine = false)
     }

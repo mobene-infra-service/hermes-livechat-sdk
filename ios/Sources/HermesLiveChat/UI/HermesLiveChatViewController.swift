@@ -259,9 +259,17 @@ public final class HermesLiveChatViewController: UIViewController {
         do {
             try await HermesLiveChat.shared.startSession(identity)
             started = true
-            if let id = HermesLiveChat.shared.currentConversationId {
+            let activeId = HermesLiveChat.shared.currentConversationId
+            if let id = activeId {
                 let messages = try await HermesLiveChat.shared.history(conversationId: id)
                 await MainActor.run { messages.forEach(addMessage) }
+            }
+            // Render the prefetched welcome whenever there is no active
+            // conversation — first visit, or the previous one is closed.
+            // Closed-conversation history may still be on screen, but that
+            // belongs to the prior chat; the new chat starts fresh.
+            if activeId == nil {
+                await loadWelcome()
             }
         } catch {
             await MainActor.run { addSystem("初始化会话失败") }
@@ -328,8 +336,14 @@ public final class HermesLiveChatViewController: UIViewController {
     }
 
     private func showWelcomePlaceholder(_ text: String) {
-        guard !hasPersistedWelcome else { return }
-        guard messageKeys.isEmpty else { return }
+        // Skip the "already rendered a welcome / messages exist" guards when
+        // there is no active conversation — closed history from a prior chat
+        // should not suppress the greeting for the new one.
+        let hasActive = HermesLiveChat.shared.currentConversationId != nil
+        if hasActive {
+            guard !hasPersistedWelcome else { return }
+            guard messageKeys.isEmpty else { return }
+        }
         guard welcomePlaceholder == nil else { return }
         welcomePlaceholder = addBubble(text, mine: false, createdAt: nil)
     }
