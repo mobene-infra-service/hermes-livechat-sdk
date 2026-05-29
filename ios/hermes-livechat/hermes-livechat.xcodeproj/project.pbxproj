@@ -284,7 +284,7 @@
 				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "livechat-demo.hermesomni.com";
-				PRODUCT_MODULE_NAME = hermeslivechat;
+				PRODUCT_MODULE_NAME = HermesLiveChatSample;
 				PRODUCT_NAME = "hermes-livechat";
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -308,7 +308,7 @@
 				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "livechat-demo.hermesomni.com";
-				PRODUCT_MODULE_NAME = hermeslivechat;
+				PRODUCT_MODULE_NAME = HermesLiveChatSample;
 				PRODUCT_NAME = "hermes-livechat";
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
