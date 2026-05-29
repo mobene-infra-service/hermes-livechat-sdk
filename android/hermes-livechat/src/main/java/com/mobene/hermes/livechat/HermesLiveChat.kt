@@ -66,17 +66,42 @@ object HermesLiveChat {
     suspend fun startSession(identity: VisitorIdentity): VisitorSession {
         val cfg = requireConfig()
         val cached = stored ?: store?.load(cfg.appKey)
-        currentConversationId = currentConversationId ?: cached?.lastConversationId
-        if (cached != null && !isExpired(cached.tokenExp)) {
+        val incomingKey = identityKey(identity)
+        val matches = identityMatches(cached?.identityKey, incomingKey)
+        currentConversationId = if (matches) {
+            currentConversationId ?: cached?.lastConversationId
+        } else {
+            null
+        }
+        if (cached != null && matches && !isExpired(cached.tokenExp)) {
             stored = cached
             connectRealtime(cached.realtimeUrl ?: cfg.realtimeUrl, cached.token)
             return cached.toVisitorSession(cfg.realtimeUrl)
         }
 
-        val next = renewSession(identity, cached?.token)
+        // When identity changes we must NOT forward the old visitor token —
+        // the backend would otherwise reuse the previous contact id and
+        // ignore the new customerId. Only pass oldToken on token renewal.
+        val oldToken = if (matches) cached?.token else null
+        val next = renewSession(identity, incomingKey, oldToken)
         refreshCurrentConversation(next.token)
         connectRealtime(next.realtimeUrl ?: cfg.realtimeUrl, next.token)
         return next.toVisitorSession(cfg.realtimeUrl)
+    }
+
+    // identityKey extracts the stable identifier used to decide whether a
+    // cached session belongs to the same visitor. identityToken can't be
+    // used as it re-signs (fresh iat/exp) on every open.
+    private fun identityKey(identity: VisitorIdentity): String? =
+        identity.customerId?.trim()?.takeIf { it.isNotEmpty() }
+
+    // identityMatches returns true when the cache is safe to reuse for the
+    // incoming identity. An empty incoming key (anonymous open) preserves
+    // whatever cache exists; a non-empty key must match exactly — a null
+    // cached key (older SDK persistence) counts as a miss.
+    private fun identityMatches(cached: String?, incoming: String?): Boolean {
+        if (incoming.isNullOrEmpty()) return true
+        return cached == incoming
     }
 
     suspend fun sendText(text: String, conversationId: String? = null): Message =
@@ -258,7 +283,7 @@ object HermesLiveChat {
         currentConversationId = currentConversationId ?: session.lastConversationId
         if (!isExpired(session.tokenExp)) return session.token
 
-        val next = renewSession(VisitorIdentity(), session.token, session.realtimeUrl)
+        val next = renewSession(VisitorIdentity(), session.identityKey, session.token, session.realtimeUrl)
         refreshCurrentConversation(next.token)
         connectRealtime(next.realtimeUrl ?: cfg.realtimeUrl, next.token)
         return next.token
@@ -270,6 +295,7 @@ object HermesLiveChat {
     // + store.save block.
     private suspend fun renewSession(
         identity: VisitorIdentity,
+        identityKey: String?,
         oldToken: String?,
         fallbackRealtimeUrl: String? = null,
     ): StoredSession {
@@ -286,6 +312,7 @@ object HermesLiveChat {
             tokenExp = json.getLong("token_exp"),
             realtimeUrl = realtimeUrl,
             lastConversationId = currentConversationId,
+            identityKey = identityKey ?: stored?.identityKey,
         )
         stored = next
         store?.save(next)

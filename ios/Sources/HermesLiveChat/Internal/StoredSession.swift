@@ -14,6 +14,13 @@ internal struct StoredSession: Codable {
     var tokenExp: Int
     var realtimeUrl: URL?
     var lastConversationId: String?
+    // identityKey pins the cached session to the customerId it was issued
+    // under. When the caller hands startSession() a different customerId we
+    // must discard the cache and re-init so the backend sees the new visitor.
+    // Optional for backward compatibility with sessions persisted by older
+    // SDK builds; a nil here is treated as "unknown" and invalidates on any
+    // non-empty incoming key.
+    var identityKey: String?
 
     func toVisitorSession(defaultRealtimeUrl: URL) -> VisitorSession {
         VisitorSession(

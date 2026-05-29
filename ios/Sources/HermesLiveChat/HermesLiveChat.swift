@@ -53,17 +53,50 @@ public final class HermesLiveChat {
     public func startSession(_ identity: VisitorIdentity) async throws -> VisitorSession {
         let cfg = try requireConfig()
         let cached = stored ?? store.load(appKey: cfg.appKey)
-        currentConversationId = currentConversationId ?? cached?.lastConversationId
-        if let cached, !isExpired(cached.tokenExp) {
+        let incomingKey = identityKey(identity)
+        let matches = identityMatches(cached: cached?.identityKey, incoming: incomingKey)
+        if matches {
+            currentConversationId = currentConversationId ?? cached?.lastConversationId
+        } else {
+            currentConversationId = nil
+        }
+        if let cached, matches, !isExpired(cached.tokenExp) {
             stored = cached
             connectRealtime(url: cached.realtimeUrl ?? cfg.realtimeUrl, token: cached.token)
             return cached.toVisitorSession(defaultRealtimeUrl: cfg.realtimeUrl)
         }
 
-        let next = try await renewSession(identity: identity, oldToken: cached?.token, fallbackRealtimeUrl: nil)
+        // When identity changes we must NOT pass the old visitor token: the
+        // backend would otherwise reuse the previous contact id and ignore
+        // the new customerId. Only forward oldToken on plain token renewal.
+        let oldToken = matches ? cached?.token : nil
+        let next = try await renewSession(
+            identity: identity,
+            identityKey: incomingKey,
+            oldToken: oldToken,
+            fallbackRealtimeUrl: nil
+        )
         await refreshCurrentConversation(token: next.token)
         connectRealtime(url: next.realtimeUrl ?? cfg.realtimeUrl, token: next.token)
         return next.toVisitorSession(defaultRealtimeUrl: cfg.realtimeUrl)
+    }
+
+    // identityKey extracts the stable identifier used to decide whether a
+    // cached session belongs to the same visitor. identityToken can't be used
+    // because it re-signs (with fresh iat/exp) on every open.
+    private func identityKey(_ identity: VisitorIdentity) -> String? {
+        let trimmed = identity.customerId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed, !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
+    // identityMatches returns true when the cache is safe to reuse for the
+    // incoming identity. An empty incoming key (anonymous open) preserves
+    // whatever cache exists; a non-empty key must match the cached key
+    // exactly — a nil cached key (older SDK persistence) counts as a miss.
+    private func identityMatches(cached: String?, incoming: String?) -> Bool {
+        guard let incoming, !incoming.isEmpty else { return true }
+        return cached == incoming
     }
 
     public func sendText(_ text: String, conversationId: String? = nil) async throws -> Message {
@@ -278,6 +311,7 @@ public final class HermesLiveChat {
 
         let next = try await renewSession(
             identity: VisitorIdentity(),
+            identityKey: session.identityKey,
             oldToken: session.token,
             fallbackRealtimeUrl: session.realtimeUrl
         )
@@ -292,6 +326,7 @@ public final class HermesLiveChat {
     // of the JSON-extract + store.save block.
     private func renewSession(
         identity: VisitorIdentity,
+        identityKey: String?,
         oldToken: String?,
         fallbackRealtimeUrl: URL?
     ) async throws -> StoredSession {
@@ -307,7 +342,8 @@ public final class HermesLiveChat {
             token: json["token"] as? String ?? fallback?.token ?? "",
             tokenExp: json["token_exp"] as? Int ?? fallback?.tokenExp ?? 0,
             realtimeUrl: realtimeUrl,
-            lastConversationId: currentConversationId ?? fallback?.lastConversationId
+            lastConversationId: currentConversationId ?? fallback?.lastConversationId,
+            identityKey: identityKey ?? fallback?.identityKey
         )
         stored = next
         store.save(next)

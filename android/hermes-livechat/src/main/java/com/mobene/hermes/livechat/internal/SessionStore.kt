@@ -22,6 +22,11 @@ internal data class StoredSession(
     val tokenExp: Long,
     val realtimeUrl: String?,
     val lastConversationId: String?,
+    // identityKey pins the cached session to the customerId it was issued
+    // under. When startSession() receives a different customerId we discard
+    // the cache and re-init so the backend sees the new visitor. Nullable
+    // for backward compatibility with sessions written by older SDK builds.
+    val identityKey: String?,
 )
 
 internal fun StoredSession.toVisitorSession(defaultRealtimeUrl: String) = VisitorSession(
@@ -62,6 +67,7 @@ internal class SessionStore(context: Context) {
             put("token_exp", session.tokenExp)
             putOpt("realtime_url", session.realtimeUrl)
             putOpt("last_conversation_id", session.lastConversationId)
+            putOpt("identity_key", session.identityKey)
         }
         prefs.edit()
             .putString(encryptedKey(session.appKey), crypto.encrypt(json.toString()))
@@ -80,6 +86,7 @@ internal class SessionStore(context: Context) {
             tokenExp = json.getLong("token_exp"),
             realtimeUrl = json.optStringOrNull("realtime_url"),
             lastConversationId = json.optStringOrNull("last_conversation_id"),
+            identityKey = json.optStringOrNull("identity_key"),
         )
     }
 
