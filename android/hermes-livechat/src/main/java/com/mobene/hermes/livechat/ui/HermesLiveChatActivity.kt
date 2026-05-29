@@ -1,14 +1,19 @@
 package com.mobene.hermes.livechat.ui
 
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
@@ -34,7 +39,9 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.PI
 import kotlin.math.max
+import kotlin.math.sin
 
 class HermesLiveChatActivity : Activity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -44,7 +51,13 @@ class HermesLiveChatActivity : Activity() {
     private lateinit var input: EditText
     private lateinit var status: TextView
     private lateinit var composer: LinearLayout
+    private lateinit var sendButton: Button
+    private lateinit var loadingOverlay: LinearLayout
+    private lateinit var loadingDots: LoadingDotsView
+    private lateinit var loadingLabel: TextView
     private var started = false
+    private var loading = false
+    private var sending = false
     private var eventsJob: Job? = null
     private val messageKeys = mutableSetOf<String>()
     private val readMarkedMessageIds = mutableSetOf<String>()
@@ -102,7 +115,8 @@ class HermesLiveChatActivity : Activity() {
         status.tag = "status"
     }
 
-    private fun buildScrollContainer(): ScrollView {
+    private fun buildScrollContainer(): FrameLayout {
+        val container = FrameLayout(this)
         scroll = ScrollView(this).apply {
             isFillViewport = true
             clipToPadding = false
@@ -119,7 +133,23 @@ class HermesLiveChatActivity : Activity() {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
             ),
         )
-        return scroll
+        container.addView(
+            scroll,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        loadingOverlay = buildLoadingOverlay()
+        container.addView(
+            loadingOverlay,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ),
+        )
+        return container
     }
 
     private fun buildComposer(): LinearLayout {
@@ -139,8 +169,33 @@ class HermesLiveChatActivity : Activity() {
                 marginEnd = dp(10)
             },
         )
-        composer.addView(buildSendButton(), LinearLayout.LayoutParams(dp(64), dp(42)))
+        sendButton = buildSendButton()
+        composer.addView(sendButton, LinearLayout.LayoutParams(dp(72), dp(42)))
+        updateSendButtonState()
         return composer
+    }
+
+    private fun buildLoadingOverlay(): LinearLayout {
+        loadingLabel = TextView(this).apply {
+            text = "正在加载..."
+            textSize = 13f
+            setTextColor(TEXT_SECONDARY)
+        }
+        return LinearLayout(this).apply {
+            visibility = View.GONE
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = rounded(Color.WHITE, BORDER, dp(1), dp(18).toFloat())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                elevation = dp(6).toFloat()
+            }
+            loadingDots = LoadingDotsView(this@HermesLiveChatActivity)
+            addView(loadingDots, LinearLayout.LayoutParams(dp(46), dp(22)).apply {
+                marginEnd = dp(8)
+            })
+            addView(loadingLabel)
+        }
     }
 
     private fun buildInputField(): EditText = EditText(this).apply {
@@ -170,12 +225,19 @@ class HermesLiveChatActivity : Activity() {
                 false
             }
         }
+        addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = updateSendButtonState()
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
     }
 
     private fun buildSendButton(): Button = Button(this).apply {
         text = "发送"
         textSize = 14f
         setTextColor(Color.WHITE)
+        isEnabled = false
+        alpha = 0.5f
         minWidth = dp(64)
         minHeight = dp(42)
         minimumHeight = 0
@@ -265,7 +327,12 @@ class HermesLiveChatActivity : Activity() {
 
     private fun loadWelcome() {
         scope.launch {
-            loadWelcomeOnce()
+            setLoading("正在加载欢迎语...")
+            try {
+                loadWelcomeOnce()
+            } finally {
+                setLoading(null)
+            }
         }
     }
 
@@ -282,12 +349,17 @@ class HermesLiveChatActivity : Activity() {
     private fun bootstrapSessionAndWelcome() {
         if (started) return
         scope.launch {
-            runCatching {
-                startSessionAndLoadHistory()
-            }.onFailure {
-                addSystemMessage(it.message ?: "初始化会话失败")
+            setLoading("正在加载会话...")
+            try {
+                runCatching {
+                    startSessionAndLoadHistory()
+                }.onFailure {
+                    addSystemMessage(it.message ?: "初始化会话失败")
+                }
+                if (!started) loadWelcomeOnce()
+            } finally {
+                setLoading(null)
             }
-            if (!started) loadWelcomeOnce()
         }
     }
 
@@ -304,8 +376,9 @@ class HermesLiveChatActivity : Activity() {
 
     private fun sendText() {
         val text = input.text.toString().trim()
-        if (text.isEmpty()) return
+        if (text.isEmpty() || sending) return
         input.setText("")
+        setSending(true)
         scope.launch {
             runCatching {
                 if (!started) {
@@ -315,7 +388,51 @@ class HermesLiveChatActivity : Activity() {
             }.onSuccess { it.forEach(::addMessage) }.onFailure {
                 input.setText(text)
                 addSystemMessage(it.message ?: "发送失败")
+            }.also {
+                setSending(false)
             }
+        }
+    }
+
+    private fun setLoading(text: String?) {
+        loading = !text.isNullOrBlank()
+        if (text.isNullOrBlank()) {
+            loadingOverlay.visibility = View.GONE
+            loadingDots.stopAnimating()
+            input.isEnabled = !sending
+            updateSendButtonState()
+            return
+        }
+        loadingLabel.text = text
+        loadingOverlay.visibility = View.VISIBLE
+        loadingDots.startAnimating()
+        input.isEnabled = false
+        updateSendButtonState()
+    }
+
+    private fun setSending(value: Boolean) {
+        sending = value
+        input.isEnabled = !value && !loading
+        updateSendButtonState()
+    }
+
+    private fun updateSendButtonState() {
+        if (!::sendButton.isInitialized) return
+        val hasText = input.text.toString().trim().isNotEmpty()
+        sendButton.isEnabled = !loading && !sending && hasText
+        sendButton.text = if (loading) {
+            "加载中"
+        } else if (sending) {
+            "发送中"
+        } else {
+            "发送"
+        }
+        sendButton.alpha = if (loading || sending) {
+            0.68f
+        } else if (hasText) {
+            1f
+        } else {
+            0.5f
         }
     }
 
@@ -488,5 +605,49 @@ class HermesLiveChatActivity : Activity() {
                     .putExtra(EXTRA_START_ON_OPEN, startSessionOnOpen),
             )
         }
+    }
+}
+
+private class LoadingDotsView(context: Context) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#64748B")
+    }
+    private val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = 1050L
+        repeatCount = ValueAnimator.INFINITE
+        addUpdateListener {
+            phase = it.animatedValue as Float
+            invalidate()
+        }
+    }
+    private var phase = 0f
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val density = resources.displayMetrics.density
+        val baseRadius = 3.5f * density
+        val spacing = 13f * density
+        val centerY = height / 2f
+        val startX = width / 2f - spacing
+
+        repeat(3) { index ->
+            val wave = ((sin((phase + index * 0.16f) * 2f * PI) + 1f) / 2f).toFloat()
+            val scale = 0.72f + wave * 0.36f
+            paint.alpha = (90 + wave * 165).toInt()
+            canvas.drawCircle(startX + spacing * index, centerY, baseRadius * scale, paint)
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        stopAnimating()
+        super.onDetachedFromWindow()
+    }
+
+    fun startAnimating() {
+        if (!animator.isStarted) animator.start()
+    }
+
+    fun stopAnimating() {
+        if (animator.isStarted) animator.cancel()
     }
 }

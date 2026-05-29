@@ -28,6 +28,10 @@ public final class HermesLiveChatViewController: UIViewController {
     private let stack = UIStackView()
     private let input = UITextField()
     private let composer = UIStackView()
+    private let sendButton = UIButton(type: .system)
+    private let loadingStack = UIStackView()
+    private let loadingDots = LoadingDotsView()
+    private let loadingLabel = UILabel()
     private var composerBottomConstraint: NSLayoutConstraint?
     private var keyboardObservers: [NSObjectProtocol] = []
     private var messageKeys = Set<String>()
@@ -36,6 +40,12 @@ public final class HermesLiveChatViewController: UIViewController {
     private var eventsTask: Task<Void, Never>?
     private var welcomePlaceholder: UIView?
     private var hasPersistedWelcome = false
+    private var isLoadingInitialState = false {
+        didSet { updateComposerState() }
+    }
+    private var isSending = false {
+        didSet { updateComposerState() }
+    }
     private static let bubbleMaxWidthRatio: CGFloat = 0.78
     private static let bubbleMaxWidthCap: CGFloat = 520
 
@@ -63,14 +73,7 @@ public final class HermesLiveChatViewController: UIViewController {
         buildUI()
         observeKeyboard()
         observeEvents()
-        Task {
-            if startSessionOnOpen {
-                await ensureSession()
-            }
-            if !startSessionOnOpen || !started {
-                await loadWelcome()
-            }
-        }
+        Task { await loadInitialState() }
     }
 
     public override func viewDidDisappear(_ animated: Bool) {
@@ -88,6 +91,7 @@ public final class HermesLiveChatViewController: UIViewController {
     private func buildUI() {
         configureScroll()
         configureComposer()
+        configureLoading()
         installLayoutConstraints()
     }
 
@@ -110,16 +114,41 @@ public final class HermesLiveChatViewController: UIViewController {
         input.borderStyle = .roundedRect
         input.returnKeyType = .send
         input.delegate = self
+        input.addTarget(self, action: #selector(inputChanged), for: .editingChanged)
         input.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let send = UIButton(type: .system)
-        send.setTitle("发送", for: .normal)
-        send.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
+        sendButton.setTitle("发送", for: .normal)
+        sendButton.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
+        updateComposerState()
         composer.axis = .horizontal
         composer.spacing = 8
         composer.translatesAutoresizingMaskIntoConstraints = false
         composer.addArrangedSubview(input)
-        composer.addArrangedSubview(send)
+        composer.addArrangedSubview(sendButton)
         view.addSubview(composer)
+    }
+
+    private func configureLoading() {
+        loadingLabel.text = "正在加载..."
+        loadingLabel.font = .preferredFont(forTextStyle: .subheadline)
+        loadingLabel.textColor = .secondaryLabel
+        loadingLabel.adjustsFontForContentSizeCategory = true
+        loadingStack.axis = .horizontal
+        loadingStack.alignment = .center
+        loadingStack.spacing = 10
+        loadingStack.layoutMargins = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 16)
+        loadingStack.isLayoutMarginsRelativeArrangement = true
+        loadingStack.backgroundColor = .secondarySystemBackground
+        loadingStack.layer.cornerRadius = 20
+        loadingStack.layer.shadowColor = UIColor.black.cgColor
+        loadingStack.layer.shadowOpacity = 0.08
+        loadingStack.layer.shadowRadius = 14
+        loadingStack.layer.shadowOffset = CGSize(width: 0, height: 8)
+        loadingStack.isHidden = true
+        loadingStack.translatesAutoresizingMaskIntoConstraints = false
+        loadingDots.translatesAutoresizingMaskIntoConstraints = false
+        loadingStack.addArrangedSubview(loadingDots)
+        loadingStack.addArrangedSubview(loadingLabel)
+        view.addSubview(loadingStack)
     }
 
     private func installLayoutConstraints() {
@@ -137,8 +166,23 @@ public final class HermesLiveChatViewController: UIViewController {
             stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32),
             composer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
             composer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            loadingStack.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
+            loadingStack.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
+            loadingDots.widthAnchor.constraint(equalToConstant: 44),
+            loadingDots.heightAnchor.constraint(equalToConstant: 18),
             bottom,
         ])
+    }
+
+    private func loadInitialState() async {
+        await MainActor.run { setLoading("正在加载会话...") }
+        if startSessionOnOpen {
+            await ensureSession()
+        }
+        if !startSessionOnOpen || !started {
+            await loadWelcome()
+        }
+        await MainActor.run { setLoading(nil) }
     }
 
     private func observeKeyboard() {
@@ -225,10 +269,17 @@ public final class HermesLiveChatViewController: UIViewController {
     }
 
     @objc private func sendTapped() {
+        guard !isSending else { return }
         let text = input.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { return }
         input.text = ""
+        isSending = true
         Task {
+            defer {
+                Task { @MainActor in
+                    self.isSending = false
+                }
+            }
             await ensureSession()
             do {
                 let messages = try await HermesLiveChat.shared.sendTextMessages(text)
@@ -240,6 +291,32 @@ public final class HermesLiveChatViewController: UIViewController {
                 }
             }
         }
+    }
+
+    @MainActor
+    private func setLoading(_ text: String?) {
+        if let text {
+            isLoadingInitialState = true
+            loadingLabel.text = text
+            loadingStack.isHidden = false
+            loadingDots.startAnimating()
+        } else {
+            isLoadingInitialState = false
+            loadingDots.stopAnimating()
+            loadingStack.isHidden = true
+        }
+    }
+
+    private func updateComposerState() {
+        let hasText = !(input.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let busy = isLoadingInitialState || isSending
+        input.isEnabled = !busy
+        sendButton.isEnabled = !busy && hasText
+        sendButton.setTitle(isLoadingInitialState ? "加载中" : isSending ? "发送中" : "发送", for: .normal)
+    }
+
+    @objc private func inputChanged() {
+        updateComposerState()
     }
 
     @objc private func dismissKeyboard() {
@@ -412,5 +489,83 @@ extension HermesLiveChatViewController: UITextFieldDelegate {
     public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         sendTapped()
         return false
+    }
+}
+
+private final class LoadingDotsView: UIView {
+    private let dots: [UIView] = (0..<3).map { _ in UIView() }
+    private var isAnimating = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        buildUI()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func startAnimating() {
+        guard !isAnimating else { return }
+        isAnimating = true
+        let now = CACurrentMediaTime()
+        for (index, dot) in dots.enumerated() {
+            let scale = CAKeyframeAnimation(keyPath: "transform.scale")
+            scale.values = [0.72, 1.18, 0.72]
+            scale.keyTimes = [0, 0.38, 1]
+            scale.duration = 0.9
+            scale.repeatCount = .infinity
+            scale.beginTime = now + Double(index) * 0.14
+            scale.timingFunctions = [
+                CAMediaTimingFunction(name: .easeInEaseOut),
+                CAMediaTimingFunction(name: .easeInEaseOut),
+            ]
+
+            let opacity = CAKeyframeAnimation(keyPath: "opacity")
+            opacity.values = [0.35, 1, 0.35]
+            opacity.keyTimes = scale.keyTimes
+            opacity.duration = scale.duration
+            opacity.repeatCount = .infinity
+            opacity.beginTime = scale.beginTime
+            opacity.timingFunctions = scale.timingFunctions
+
+            dot.layer.add(scale, forKey: "hermes.loading.scale")
+            dot.layer.add(opacity, forKey: "hermes.loading.opacity")
+        }
+    }
+
+    func stopAnimating() {
+        isAnimating = false
+        dots.forEach {
+            $0.layer.removeAnimation(forKey: "hermes.loading.scale")
+            $0.layer.removeAnimation(forKey: "hermes.loading.opacity")
+        }
+    }
+
+    private func buildUI() {
+        let stack = UIStackView(arrangedSubviews: dots)
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.distribution = .equalSpacing
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        dots.forEach { dot in
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.backgroundColor = .secondaryLabel
+            dot.layer.cornerRadius = 3.5
+            dot.alpha = 0.35
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: 7),
+                dot.heightAnchor.constraint(equalToConstant: 7),
+            ])
+        }
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
     }
 }

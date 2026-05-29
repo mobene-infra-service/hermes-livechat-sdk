@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart' hide ConnectionState;
 
@@ -227,8 +228,11 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
         _mergeMessages([message]);
       case ConversationUpdated(:final conversation):
         setState(() {
-          _conversationClosed = false;
           if (conversation.status == 'closed') {
+            _conversationClosed = true;
+            _hasSession = false;
+          } else {
+            _conversationClosed = false;
             _hasSession = true;
           }
         });
@@ -335,7 +339,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
 
   Widget _buildMessageList(ColorScheme colorScheme) {
     if (_loadingWelcome && _messages.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: _TypingLoader(label: '正在加载会话'));
     }
 
     final hasPersistedWelcome =
@@ -574,17 +578,176 @@ class _Composer extends StatelessWidget {
             IconButton.filled(
               tooltip: '发送',
               icon: busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                  ? _ButtonTypingDots(color: colorScheme.onPrimary)
                   : const Icon(Icons.send),
               onPressed: enabled && !busy ? onSend : null,
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _TypingLoader extends StatelessWidget {
+  const _TypingLoader({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.78),
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.shadow.withValues(alpha: 0.08),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircleAvatar(
+                  radius: 16,
+                  backgroundColor: colorScheme.primary,
+                  foregroundColor: colorScheme.onPrimary,
+                  child: const Icon(Icons.support_agent, size: 18),
+                ),
+                const SizedBox(width: 10),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(18),
+                      topRight: Radius.circular(18),
+                      bottomLeft: Radius.circular(6),
+                      bottomRight: Radius.circular(18),
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 13,
+                      vertical: 10,
+                    ),
+                    child: _TypingDots(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          label,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ButtonTypingDots extends StatelessWidget {
+  const _ButtonTypingDots({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 22,
+      height: 18,
+      child: Center(
+        child: _TypingDots(
+          color: color,
+          dotSize: 5,
+          spacing: 3,
+        ),
+      ),
+    );
+  }
+}
+
+class _TypingDots extends StatefulWidget {
+  const _TypingDots({
+    required this.color,
+    this.dotSize = 6,
+    this.spacing = 4,
+  });
+
+  final Color color;
+  final double dotSize;
+  final double spacing;
+
+  @override
+  State<_TypingDots> createState() => _TypingDotsState();
+}
+
+class _TypingDotsState extends State<_TypingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1050),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (index) {
+            final wave =
+                (math.sin((_controller.value + index * 0.16) * math.pi * 2) +
+                        1) /
+                    2;
+            final scale = 0.72 + wave * 0.36;
+            final opacity = 0.35 + wave * 0.65;
+            return Padding(
+              padding: EdgeInsets.symmetric(horizontal: widget.spacing / 2),
+              child: Opacity(
+                opacity: opacity,
+                child: Transform.scale(
+                  scale: scale,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: widget.color,
+                      shape: BoxShape.circle,
+                    ),
+                    child: SizedBox.square(dimension: widget.dotSize),
+                  ),
+                ),
+              ),
+            );
+          }),
+        );
+      },
     );
   }
 }
