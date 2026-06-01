@@ -52,6 +52,8 @@ public final class HermesLiveChatViewController: UIViewController {
     }
     private static let bubbleMaxWidthRatio: CGFloat = 0.78
     private static let bubbleMaxWidthCap: CGFloat = 520
+    private static let imageBubbleWidth: CGFloat = 220
+    private static let imageBubbleMaxHeight: CGFloat = 320
     private static let maxImageBytes = 10 * 1024 * 1024
 
     public init(
@@ -515,17 +517,18 @@ public final class HermesLiveChatViewController: UIViewController {
 
         let imageView = UIImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.contentMode = .scaleAspectFill
+        imageView.contentMode = .scaleAspectFit
         imageView.clipsToBounds = true
         imageView.backgroundColor = .tertiarySystemFill
         container.addSubview(imageView)
+        let heightConstraint = imageView.heightAnchor.constraint(equalToConstant: 170)
         NSLayoutConstraint.activate([
             imageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
             imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
             imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4),
             imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -4),
-            imageView.widthAnchor.constraint(equalToConstant: 220),
-            imageView.heightAnchor.constraint(equalToConstant: 170),
+            imageView.widthAnchor.constraint(equalToConstant: Self.imageBubbleWidth),
+            heightConstraint,
         ])
         Task {
             guard
@@ -535,9 +538,17 @@ public final class HermesLiveChatViewController: UIViewController {
             else { return }
             await MainActor.run {
                 imageView.image = image
+                heightConstraint.constant = Self.displayHeight(for: image.size)
+                self.view.layoutIfNeeded()
             }
         }
         return container
+    }
+
+    private static func displayHeight(for imageSize: CGSize) -> CGFloat {
+        guard imageSize.width > 0, imageSize.height > 0 else { return 170 }
+        let aspectHeight = imageBubbleWidth * imageSize.height / imageSize.width
+        return min(max(aspectHeight, 96), imageBubbleMaxHeight)
     }
 
     private func makeBubbleColumn(mine: Bool, bubble: UIView, createdAt: Int?) -> UIStackView {
