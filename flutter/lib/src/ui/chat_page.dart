@@ -183,7 +183,9 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
 
   Future<void> _sendText() async {
     final text = _input.text.trim();
-    if (text.isEmpty || _sending || _uploadingImage || _conversationClosed) return;
+    if (text.isEmpty || _sending || _uploadingImage || _conversationClosed) {
+      return;
+    }
 
     _input.clear();
     setState(() {
@@ -528,6 +530,9 @@ class _MessageBubble extends StatelessWidget {
   final String senderType;
   final String? imageUrl;
 
+  static const _imageMaxWidth = 220.0;
+  static const _imageMaxHeight = 320.0;
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -556,15 +561,27 @@ class _MessageBubble extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (imageUrl != null)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        imageUrl!,
-                        width: 220,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Text(
-                          '图片加载失败',
-                          style: TextStyle(color: foreground),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxWidth: _imageMaxWidth,
+                        maxHeight: _imageMaxHeight,
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: ColoredBox(
+                          color: colorScheme.surfaceContainerHighest,
+                          child: Image.network(
+                            imageUrl!,
+                            width: _imageMaxWidth,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: Text(
+                                '图片加载失败',
+                                style: TextStyle(color: foreground),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),

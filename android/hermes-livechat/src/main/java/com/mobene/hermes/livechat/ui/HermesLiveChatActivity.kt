@@ -638,11 +638,13 @@ class HermesLiveChatActivity : Activity() {
                 radius = dp(16).toFloat(),
             )
             setPadding(dp(4), dp(4), dp(4), dp(4))
-            scaleType = ImageView.ScaleType.CENTER_CROP
+            scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = true
+            minimumHeight = dp(96)
+            maxHeight = dp(320)
             layoutParams = LinearLayout.LayoutParams(
                 (resources.displayMetrics.widthPixels * 0.58f).toInt(),
-                dp(180),
+                LinearLayout.LayoutParams.WRAP_CONTENT,
             )
             ImageLoader.load(this, url)
         }
@@ -792,7 +794,12 @@ private object ImageLoader {
                 URL(url).openStream().use(BitmapFactory::decodeStream)
             }.onSuccess { bitmap ->
                 target.post {
+                    if (bitmap == null) {
+                        target.setImageResource(android.R.drawable.ic_menu_report_image)
+                        return@post
+                    }
                     target.setImageBitmap(bitmap)
+                    updateImageBounds(target, bitmap.width, bitmap.height)
                 }
             }.onFailure {
                 target.post {
@@ -800,6 +807,26 @@ private object ImageLoader {
                 }
             }
         }.start()
+    }
+
+    private fun updateImageBounds(target: ImageView, imageWidth: Int, imageHeight: Int) {
+        val params = target.layoutParams ?: return
+        val width = if (params.width > 0) {
+            params.width
+        } else {
+            (target.resources.displayMetrics.widthPixels * 0.58f).toInt()
+        }
+        val contentWidth = max(1, width - target.paddingLeft - target.paddingRight)
+        val density = target.resources.displayMetrics.density
+        fun dp(value: Int): Int = (value * density + 0.5f).toInt()
+        val contentHeight = if (imageWidth > 0 && imageHeight > 0) {
+            (contentWidth * imageHeight / imageWidth.toFloat()).toInt()
+        } else {
+            dp(180)
+        }
+        params.height = (contentHeight + target.paddingTop + target.paddingBottom)
+            .coerceIn(dp(96), dp(320))
+        target.layoutParams = params
     }
 }
 
