@@ -102,11 +102,12 @@ HermesLiveChatActivity.open(
 
 - 欢迎语和历史恢复
 - 文本发送
+- 图片选择、上传和图片消息展示
 - 实时消息和会话关闭事件
 - 连接状态和错误提示
 - 关闭聊天页后不立即断开 WebSocket，默认 5 分钟 idle 后断开
 
-默认 UI 不带图片选择器。如需图片、附件或完全自定义 UI，使用下面的 headless API。
+如需非图片附件或完全自定义 UI，使用下面的 headless API。
 
 ## Headless API
 

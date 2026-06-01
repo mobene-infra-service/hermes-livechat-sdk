@@ -4,11 +4,13 @@ import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.text.Editable
@@ -22,6 +24,8 @@ import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -30,12 +34,15 @@ import com.mobene.hermes.livechat.HermesLiveChatEvent
 import com.mobene.hermes.livechat.LiveChatConnectionState
 import com.mobene.hermes.livechat.Message
 import com.mobene.hermes.livechat.VisitorIdentity
+import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -51,6 +58,7 @@ class HermesLiveChatActivity : Activity() {
     private lateinit var input: EditText
     private lateinit var status: TextView
     private lateinit var composer: LinearLayout
+    private lateinit var attachButton: ImageButton
     private lateinit var sendButton: Button
     private lateinit var loadingOverlay: LinearLayout
     private lateinit var loadingDots: LoadingDotsView
@@ -58,6 +66,7 @@ class HermesLiveChatActivity : Activity() {
     private var started = false
     private var loading = false
     private var sending = false
+    private var uploadingImage = false
     private var eventsJob: Job? = null
     private val messageKeys = mutableSetOf<String>()
     private val readMarkedMessageIds = mutableSetOf<String>()
@@ -76,6 +85,13 @@ class HermesLiveChatActivity : Activity() {
             bootstrapSessionAndWelcome()
         } else {
             loadWelcome()
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_PICK_IMAGE && resultCode == RESULT_OK) {
+            data?.data?.let(::sendImage)
         }
     }
 
@@ -163,6 +179,10 @@ class HermesLiveChatActivity : Activity() {
             }
         }
         input = buildInputField()
+        attachButton = buildAttachButton()
+        composer.addView(attachButton, LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+            marginEnd = dp(8)
+        })
         composer.addView(
             input,
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -230,6 +250,31 @@ class HermesLiveChatActivity : Activity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = updateSendButtonState()
             override fun afterTextChanged(s: Editable?) = Unit
         })
+    }
+
+    private fun buildAttachButton(): ImageButton = ImageButton(this).apply {
+        contentDescription = "发送图片"
+        setImageResource(android.R.drawable.ic_menu_gallery)
+        setColorFilter(TEXT_SECONDARY)
+        background = rounded(
+            color = Color.WHITE,
+            strokeColor = BORDER,
+            strokeWidth = dp(1),
+            radius = dp(21).toFloat(),
+        )
+        setPadding(dp(9), dp(9), dp(9), dp(9))
+        scaleType = ImageView.ScaleType.CENTER
+        setOnClickListener {
+            if (!loading && !sending && !uploadingImage) {
+                startActivityForResult(
+                    Intent(Intent.ACTION_GET_CONTENT).apply {
+                        type = "image/*"
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                    },
+                    REQ_PICK_IMAGE,
+                )
+            }
+        }
     }
 
     private fun buildSendButton(): Button = Button(this).apply {
@@ -376,7 +421,7 @@ class HermesLiveChatActivity : Activity() {
 
     private fun sendText() {
         val text = input.text.toString().trim()
-        if (text.isEmpty() || sending) return
+        if (text.isEmpty() || sending || uploadingImage) return
         input.setText("")
         setSending(true)
         scope.launch {
@@ -394,12 +439,34 @@ class HermesLiveChatActivity : Activity() {
         }
     }
 
+    private fun sendImage(uri: Uri) {
+        if (sending || uploadingImage) return
+        setUploadingImage(true)
+        scope.launch {
+            runCatching {
+                val attachment = readImageAttachment(uri)
+                if (!started) {
+                    startSessionAndLoadHistory()
+                }
+                HermesLiveChat.sendImageMessages(
+                    bytes = attachment.bytes,
+                    mimeType = attachment.mimeType,
+                    filename = attachment.filename,
+                )
+            }.onSuccess { it.forEach(::addMessage) }.onFailure {
+                addSystemMessage(it.message ?: "图片发送失败")
+            }.also {
+                setUploadingImage(false)
+            }
+        }
+    }
+
     private fun setLoading(text: String?) {
         loading = !text.isNullOrBlank()
         if (text.isNullOrBlank()) {
             loadingOverlay.visibility = View.GONE
             loadingDots.stopAnimating()
-            input.isEnabled = !sending
+            input.isEnabled = !sending && !uploadingImage
             updateSendButtonState()
             return
         }
@@ -412,22 +479,35 @@ class HermesLiveChatActivity : Activity() {
 
     private fun setSending(value: Boolean) {
         sending = value
-        input.isEnabled = !value && !loading
+        input.isEnabled = !value && !loading && !uploadingImage
+        updateSendButtonState()
+    }
+
+    private fun setUploadingImage(value: Boolean) {
+        uploadingImage = value
+        input.isEnabled = !value && !loading && !sending
         updateSendButtonState()
     }
 
     private fun updateSendButtonState() {
         if (!::sendButton.isInitialized) return
         val hasText = input.text.toString().trim().isNotEmpty()
-        sendButton.isEnabled = !loading && !sending && hasText
+        val busy = loading || sending || uploadingImage
+        if (::attachButton.isInitialized) {
+            attachButton.isEnabled = !busy
+            attachButton.alpha = if (busy) 0.5f else 1f
+        }
+        sendButton.isEnabled = !busy && hasText
         sendButton.text = if (loading) {
             "加载中"
+        } else if (uploadingImage) {
+            "上传中"
         } else if (sending) {
             "发送中"
         } else {
             "发送"
         }
-        sendButton.alpha = if (loading || sending) {
+        sendButton.alpha = if (busy) {
             0.68f
         } else if (hasText) {
             1f
@@ -482,8 +562,7 @@ class HermesLiveChatActivity : Activity() {
             removeWelcomePlaceholder()
         }
 
-        val text = messageDisplayText(message)
-        addBubble(text, mine = message.senderType == "visitor", createdAt = message.createdAt)
+        addBubble(message, mine = message.senderType == "visitor")
         markMessageReadIfNeeded(message)
     }
 
@@ -508,7 +587,7 @@ class HermesLiveChatActivity : Activity() {
         val text = message.content.optString("text").trim()
         if (text.isNotEmpty()) return text
         return when (message.contentType) {
-            "image" -> message.content.optString("url")
+            "image" -> ""
             else -> "[${message.contentType}]"
         }
     }
@@ -529,6 +608,44 @@ class HermesLiveChatActivity : Activity() {
         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
         return row
     }
+
+    private fun addBubble(message: Message, mine: Boolean): View {
+        val row = bubbleRow(mine)
+        val column = bubbleColumn(mine).apply {
+            val imageUrl = if (message.contentType == "image") message.content.optString("url").trim() else ""
+            if (imageUrl.isNotEmpty()) {
+                addView(imageBubble(imageUrl, mine))
+            }
+            val text = messageDisplayText(message)
+            if (text.isNotEmpty() || imageUrl.isEmpty()) {
+                addView(bubbleLabel(text.ifEmpty { "[${message.contentType}]" }, mine))
+            }
+            if (message.createdAt > 0) addView(bubbleTimestamp(message.createdAt))
+        }
+        row.addView(column)
+        messages.addView(row)
+        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+        return row
+    }
+
+    private fun imageBubble(url: String, mine: Boolean): ImageView =
+        ImageView(this).apply {
+            contentDescription = "图片消息"
+            background = rounded(
+                color = if (mine) PRIMARY else Color.WHITE,
+                strokeColor = if (mine) PRIMARY else BORDER,
+                strokeWidth = if (mine) 0 else dp(1),
+                radius = dp(16).toFloat(),
+            )
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            adjustViewBounds = true
+            layoutParams = LinearLayout.LayoutParams(
+                (resources.displayMetrics.widthPixels * 0.58f).toInt(),
+                dp(180),
+            )
+            ImageLoader.load(this, url)
+        }
 
     private fun bubbleRow(mine: Boolean) = LinearLayout(this).apply {
         gravity = if (mine) Gravity.END else Gravity.START
@@ -565,6 +682,43 @@ class HermesLiveChatActivity : Activity() {
     private fun formatTime(seconds: Long): String =
         timeFormatter.format(Date(seconds * 1000))
 
+    private suspend fun readImageAttachment(uri: Uri): ImageAttachment = withContext(Dispatchers.IO) {
+        val mimeType = contentResolver.getType(uri)?.takeIf { it.startsWith("image/") } ?: "image/jpeg"
+        if (mimeType !in allowedImageMimeTypes) {
+            throw IllegalArgumentException("不支持该图片类型")
+        }
+        val bytes = contentResolver.openInputStream(uri)?.use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var total = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > maxImageBytes) {
+                    throw IllegalArgumentException("图片不能超过 10MB")
+                }
+                output.write(buffer, 0, read)
+            }
+            output.toByteArray()
+        }
+            ?: throw IllegalArgumentException("读取图片失败")
+        if (bytes.isEmpty()) {
+            throw IllegalArgumentException("读取图片失败")
+        }
+        ImageAttachment(
+            bytes = bytes,
+            mimeType = mimeType,
+            filename = "image_${System.currentTimeMillis()}.${imageExtension(mimeType)}",
+        )
+    }
+
+    private fun imageExtension(mimeType: String): String = when (mimeType.lowercase(Locale.US)) {
+        "image/png" -> "png"
+        "image/gif" -> "gif"
+        else -> "jpg"
+    }
+
     private fun LiveChatConnectionState.label(): String = when (this) {
         LiveChatConnectionState.IDLE -> "未连接"
         LiveChatConnectionState.CONNECTING -> "连接中"
@@ -597,12 +751,15 @@ class HermesLiveChatActivity : Activity() {
         private val TEXT_SECONDARY = Color.parseColor("#475569")
         private val TEXT_MUTED = Color.parseColor("#94A3B8")
 
+        private const val maxImageBytes = 10 * 1024 * 1024
+        private val allowedImageMimeTypes = setOf("image/jpeg", "image/png", "image/gif")
         private val timeFormatter = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
 
         private const val EXTRA_IDENTITY = "identity"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_LOCALE = "locale"
         private const val EXTRA_START_ON_OPEN = "start_on_open"
+        private const val REQ_PICK_IMAGE = 9011
 
         fun open(
             context: Context,
@@ -619,6 +776,30 @@ class HermesLiveChatActivity : Activity() {
                     .putExtra(EXTRA_START_ON_OPEN, startSessionOnOpen),
             )
         }
+    }
+}
+
+private data class ImageAttachment(
+    val bytes: ByteArray,
+    val mimeType: String,
+    val filename: String,
+)
+
+private object ImageLoader {
+    fun load(target: ImageView, url: String) {
+        Thread {
+            runCatching {
+                URL(url).openStream().use(BitmapFactory::decodeStream)
+            }.onSuccess { bitmap ->
+                target.post {
+                    target.setImageBitmap(bitmap)
+                }
+            }.onFailure {
+                target.post {
+                    target.setImageResource(android.R.drawable.ic_menu_report_image)
+                }
+            }
+        }.start()
     }
 }
 

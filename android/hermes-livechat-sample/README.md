@@ -48,5 +48,6 @@ adb install -r hermes-livechat-sample/build/outputs/apk/debug/hermes-livechat-sa
 - 打开聊天页能看到欢迎语。
 - 进入聊天页后能创建或续签 visitor session。
 - 文本消息能发送成功。
+- 点击聊天页图片按钮能从系统选择器选择图片，并发送 `content_type=image` 消息。
 - 能收到实时下行消息。
 - 退出聊天页后再次进入，能恢复当前会话历史。

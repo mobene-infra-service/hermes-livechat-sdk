@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart' hide ConnectionState;
+import 'package:image_picker/image_picker.dart';
 
 import '../client.dart';
 import '../errors.dart';
@@ -78,6 +79,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
   late final HermesLiveChat _client;
   final _input = TextEditingController();
   final _scroll = ScrollController();
+  final _imagePicker = ImagePicker();
   final _messages = <Message>[];
   final _messageKeys = <String>{};
   final _readMarkedMessageIds = <String>{};
@@ -89,6 +91,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
   bool _loadingWelcome = true;
   bool _starting = false;
   bool _sending = false;
+  bool _uploadingImage = false;
   bool _hasSession = false;
   bool _conversationClosed = false;
 
@@ -180,7 +183,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
 
   Future<void> _sendText() async {
     final text = _input.text.trim();
-    if (text.isEmpty || _sending || _conversationClosed) return;
+    if (text.isEmpty || _sending || _uploadingImage || _conversationClosed) return;
 
     _input.clear();
     setState(() {
@@ -212,6 +215,57 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
       if (mounted) {
         setState(() {
           _sending = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _pickAndSendImage() async {
+    if (_uploadingImage || _sending || _conversationClosed) return;
+    try {
+      final image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 88,
+      );
+      if (image == null) return;
+      final bytes = await image.readAsBytes();
+      if (bytes.isEmpty || bytes.length > 10 * 1024 * 1024) {
+        _handleError(
+          const HermesLiveChatException(
+            HermesLiveChatError.attachmentTooLarge,
+            message: '图片不能超过 10MB',
+          ),
+        );
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _uploadingImage = true;
+        _errorText = null;
+      });
+      await _ensureSession();
+      if (!mounted || !_hasSession) return;
+      final mimeType = _mimeTypeForImage(image.name);
+      final messages = await _client.sendImageMessages(
+        bytes: bytes,
+        mimeType: mimeType,
+        filename: image.name.isEmpty ? null : image.name,
+      );
+      if (!mounted) return;
+      _mergeMessages(messages);
+    } on HermesLiveChatException catch (error) {
+      _handleError(error);
+    } catch (error) {
+      _handleError(
+        HermesLiveChatException(
+          HermesLiveChatError.unknown,
+          message: error.toString(),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _uploadingImage = false;
         });
       }
     }
@@ -328,8 +382,10 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
             _Composer(
               controller: _input,
               enabled: !_conversationClosed,
-              busy: _starting || _sending,
+              busy: _starting || _sending || _uploadingImage,
+              uploadingImage: _uploadingImage,
               onSend: _sendText,
+              onAttachImage: _pickAndSendImage,
             ),
           ],
         ),
@@ -532,13 +588,17 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.enabled,
     required this.busy,
+    required this.uploadingImage,
     required this.onSend,
+    required this.onAttachImage,
   });
 
   final TextEditingController controller;
   final bool enabled;
   final bool busy;
+  final bool uploadingImage;
   final VoidCallback onSend;
+  final VoidCallback onAttachImage;
 
   @override
   Widget build(BuildContext context) {
@@ -550,6 +610,12 @@ class _Composer extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: Row(
           children: [
+            IconButton(
+              tooltip: '发送图片',
+              icon: const Icon(Icons.image_outlined),
+              onPressed: enabled && !busy ? onAttachImage : null,
+            ),
+            const SizedBox(width: 4),
             Expanded(
               child: TextField(
                 controller: controller,
@@ -578,7 +644,10 @@ class _Composer extends StatelessWidget {
             IconButton.filled(
               tooltip: '发送',
               icon: busy
-                  ? _ButtonTypingDots(color: colorScheme.onPrimary)
+                  ? _ButtonTypingDots(
+                      color: colorScheme.onPrimary,
+                      icon: uploadingImage ? Icons.image_outlined : null,
+                    )
                   : const Icon(Icons.send),
               onPressed: enabled && !busy ? onSend : null,
             ),
@@ -661,9 +730,10 @@ class _TypingLoader extends StatelessWidget {
 }
 
 class _ButtonTypingDots extends StatelessWidget {
-  const _ButtonTypingDots({required this.color});
+  const _ButtonTypingDots({required this.color, this.icon});
 
   final Color color;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -671,11 +741,17 @@ class _ButtonTypingDots extends StatelessWidget {
       width: 22,
       height: 18,
       child: Center(
-        child: _TypingDots(
-          color: color,
-          dotSize: 5,
-          spacing: 3,
-        ),
+        child: icon == null
+            ? _TypingDots(
+                color: color,
+                dotSize: 5,
+                spacing: 3,
+              )
+            : Icon(
+                icon,
+                size: 18,
+                color: color,
+              ),
       ),
     );
   }
@@ -777,4 +853,11 @@ int _messageSortRank(Message message) {
   if (message.contentType == 'welcome') return 0;
   if (message.contentType == 'close') return 2;
   return 1;
+}
+
+String _mimeTypeForImage(String name) {
+  final lower = name.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  return 'image/jpeg';
 }

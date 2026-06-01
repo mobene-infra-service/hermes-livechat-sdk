@@ -58,6 +58,8 @@ Xcode 工程也可以通过 `File > Add Package Dependencies...` 添加本地 pa
 
 生产环境建议使用 `https://` 和 `wss://`。测试环境如果使用 `http://`，需要在 `Info.plist` 放行 ATS；生产环境应使用可信证书。
 
+如果使用 SDK 默认聊天页的图片发送能力，宿主 App 需要在 `Info.plist` 配置 `NSPhotoLibraryUsageDescription`。
+
 ## 默认聊天页
 
 建议在 App 启动或业务模块初始化时调用一次：
@@ -97,11 +99,12 @@ HermesLiveChatLauncher.present(
 
 - 欢迎语和历史恢复
 - 文本发送
+- 图片选择、上传和图片消息展示
 - 实时消息和会话关闭事件
 - 错误提示
 - 关闭聊天页后不立即断开 WebSocket，默认 5 分钟 idle 后断开
 
-默认 UI 不带图片选择器。如需图片、附件或完全自定义 UI，使用下面的 headless API。
+如需非图片附件或完全自定义 UI，使用下面的 headless API。
 
 ## Headless API
 

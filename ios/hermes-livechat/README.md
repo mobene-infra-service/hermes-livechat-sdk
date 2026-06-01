@@ -26,7 +26,8 @@ to manually enter:
 
 The app configures `HermesLiveChat` and opens the default chat page with
 `startSessionOnOpen` enabled. The SDK default chat page shows loading state while
-the initial session or welcome message is fetched.
+the initial session or welcome message is fetched. The chat page includes a
+photo button for selecting and sending `content_type=image` messages.
 
 `secretKey` is included only to test `is_auth=1` against the test environment. Do not embed the Secret Key in a production app; production integrations should ask the customer App Backend for a short-lived `identity_token`.
 

@@ -42,6 +42,8 @@ dependencies:
 - Dart `>=3.0.0 <4.0.0`
 - Flutter `>=3.10.0`
 
+默认聊天页使用 `image_picker` 选择图片。iOS 宿主 App 需要在 `Info.plist` 配置 `NSPhotoLibraryUsageDescription`；Android 通常通过系统选择器授权，不需要额外存储权限。
+
 ## 三端 SDK 说明
 
 当前 `sdk/flutter/` 是 Flutter package，适用于 Flutter App。纯 Android 或纯 iOS App 不能直接 import 这个包，需要独立 native SDK。
@@ -136,12 +138,13 @@ Navigator.of(context).push(
 - 拉欢迎语
 - 首次发送前创建 visitor session
 - 文本发送
+- 图片选择、上传和图片消息展示
 - 历史消息
 - 实时下行消息
 - 连接状态和错误提示
 - 会话关闭后的输入禁用
 
-默认 UI 不带图片选择器；业务 App 可以继续用能力层的 `sendImage()` 接入自己的图片选择和预览。
+业务 App 也可以继续用能力层的 `sendImage()` 接入自己的图片选择和预览。
 
 `startSessionOnOpen` 默认是 `false`，以保持“打开入口只拉欢迎语，不创建 visitor”的流程。设为 `true` 时，进入聊天页会立即创建 / 续签 visitor session、尝试恢复已有会话历史并连接 realtime；不会因为打开页面而创建空对话。如果历史中已有 `content_type=welcome`，会作为会话第一条消息渲染，不再展示本地占位欢迎语。
 

@@ -28,6 +28,7 @@ public final class HermesLiveChatViewController: UIViewController {
     private let stack = UIStackView()
     private let input = UITextField()
     private let composer = UIStackView()
+    private let attachButton = UIButton(type: .system)
     private let sendButton = UIButton(type: .system)
     private let loadingStack = UIStackView()
     private let loadingDots = LoadingDotsView()
@@ -46,8 +47,12 @@ public final class HermesLiveChatViewController: UIViewController {
     private var isSending = false {
         didSet { updateComposerState() }
     }
+    private var isUploadingImage = false {
+        didSet { updateComposerState() }
+    }
     private static let bubbleMaxWidthRatio: CGFloat = 0.78
     private static let bubbleMaxWidthCap: CGFloat = 520
+    private static let maxImageBytes = 10 * 1024 * 1024
 
     public init(
         identity: VisitorIdentity,
@@ -116,12 +121,18 @@ public final class HermesLiveChatViewController: UIViewController {
         input.delegate = self
         input.addTarget(self, action: #selector(inputChanged), for: .editingChanged)
         input.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        attachButton.setImage(UIImage(systemName: "photo"), for: .normal)
+        attachButton.accessibilityLabel = "发送图片"
+        attachButton.addTarget(self, action: #selector(attachTapped), for: .touchUpInside)
+        attachButton.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        attachButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
         sendButton.setTitle("发送", for: .normal)
         sendButton.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
         updateComposerState()
         composer.axis = .horizontal
         composer.spacing = 8
         composer.translatesAutoresizingMaskIntoConstraints = false
+        composer.addArrangedSubview(attachButton)
         composer.addArrangedSubview(input)
         composer.addArrangedSubview(sendButton)
         view.addSubview(composer)
@@ -277,7 +288,7 @@ public final class HermesLiveChatViewController: UIViewController {
     }
 
     @objc private func sendTapped() {
-        guard !isSending else { return }
+        guard !isSending && !isUploadingImage else { return }
         let text = input.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { return }
         input.text = ""
@@ -301,6 +312,46 @@ public final class HermesLiveChatViewController: UIViewController {
         }
     }
 
+    @objc private func attachTapped() {
+        guard !isSending && !isUploadingImage else { return }
+        let picker = UIImagePickerController()
+        picker.sourceType = .photoLibrary
+        picker.mediaTypes = ["public.image"]
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    private func sendImage(_ image: UIImage) {
+        guard !isUploadingImage else { return }
+        guard let data = image.jpegData(compressionQuality: 0.88) else {
+            addSystem("读取图片失败")
+            return
+        }
+        guard data.count > 0, data.count <= Self.maxImageBytes else {
+            addSystem("图片不能超过 10MB")
+            return
+        }
+        isUploadingImage = true
+        Task {
+            defer {
+                Task { @MainActor in
+                    self.isUploadingImage = false
+                }
+            }
+            await ensureSession()
+            do {
+                let messages = try await HermesLiveChat.shared.sendImageMessages(
+                    data: data,
+                    mimeType: "image/jpeg",
+                    filename: "image_\(Int(Date().timeIntervalSince1970)).jpg"
+                )
+                await MainActor.run { messages.forEach(addMessage) }
+            } catch {
+                await MainActor.run { addSystem("图片发送失败") }
+            }
+        }
+    }
+
     @MainActor
     private func setLoading(_ text: String?) {
         if let text {
@@ -317,10 +368,11 @@ public final class HermesLiveChatViewController: UIViewController {
 
     private func updateComposerState() {
         let hasText = !(input.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let busy = isLoadingInitialState || isSending
+        let busy = isLoadingInitialState || isSending || isUploadingImage
         input.isEnabled = !busy
+        attachButton.isEnabled = !busy
         sendButton.isEnabled = !busy && hasText
-        sendButton.setTitle(isLoadingInitialState ? "加载中" : isSending ? "发送中" : "发送", for: .normal)
+        sendButton.setTitle(isLoadingInitialState ? "加载中" : isUploadingImage ? "上传中" : isSending ? "发送中" : "发送", for: .normal)
     }
 
     @objc private func inputChanged() {
@@ -363,7 +415,7 @@ public final class HermesLiveChatViewController: UIViewController {
             hasPersistedWelcome = true
             removeWelcomePlaceholder()
         }
-        addBubble(message.displayText, mine: message.senderType == "visitor", createdAt: message.createdAt)
+        addBubble(message, mine: message.senderType == "visitor")
         markMessageReadIfNeeded(message)
     }
 
@@ -406,6 +458,19 @@ public final class HermesLiveChatViewController: UIViewController {
         return row
     }
 
+    @discardableResult
+    private func addBubble(_ message: Message, mine: Bool) -> UIView {
+        let bubble = makeMessageBubbleView(message, mine: mine)
+        let column = makeBubbleColumn(mine: mine, bubble: bubble, createdAt: message.createdAt)
+        let row = UIView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(column)
+        stack.addArrangedSubview(row)
+        activateBubbleConstraints(row: row, column: column, bubble: bubble, mine: mine)
+        scrollToBottom()
+        return row
+    }
+
     private func makeBubbleView(text: String, mine: Bool) -> UIView {
         let label = UILabel()
         label.text = text
@@ -432,6 +497,47 @@ public final class HermesLiveChatViewController: UIViewController {
             label.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -8),
         ])
         return bubble
+    }
+
+    private func makeMessageBubbleView(_ message: Message, mine: Bool) -> UIView {
+        if message.contentType == "image", let url = message.content["url"] as? String, !url.isEmpty {
+            return makeImageBubbleView(url: url, mine: mine)
+        }
+        return makeBubbleView(text: message.displayText, mine: mine)
+    }
+
+    private func makeImageBubbleView(url: String, mine: Bool) -> UIView {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = mine ? .systemBlue : .secondarySystemBackground
+        container.layer.cornerRadius = 17
+        container.layer.masksToBounds = true
+
+        let imageView = UIImageView()
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFill
+        imageView.clipsToBounds = true
+        imageView.backgroundColor = .tertiarySystemFill
+        container.addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
+            imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
+            imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4),
+            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -4),
+            imageView.widthAnchor.constraint(equalToConstant: 220),
+            imageView.heightAnchor.constraint(equalToConstant: 170),
+        ])
+        Task {
+            guard
+                let remoteURL = URL(string: url),
+                let (data, _) = try? await URLSession.shared.data(from: remoteURL),
+                let image = UIImage(data: data)
+            else { return }
+            await MainActor.run {
+                imageView.image = image
+            }
+        }
+        return container
     }
 
     private func makeBubbleColumn(mine: Bool, bubble: UIView, createdAt: Int?) -> UIStackView {
@@ -503,6 +609,22 @@ extension HermesLiveChatViewController: UITextFieldDelegate {
     public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         sendTapped()
         return false
+    }
+}
+
+extension HermesLiveChatViewController: UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    public func imagePickerController(
+        _ picker: UIImagePickerController,
+        didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+    ) {
+        picker.dismiss(animated: true)
+        if let image = info[.originalImage] as? UIImage {
+            sendImage(image)
+        }
+    }
+
+    public func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        picker.dismiss(animated: true)
     }
 }
 
