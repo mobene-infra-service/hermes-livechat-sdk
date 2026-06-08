@@ -41,6 +41,7 @@ public final class HermesLiveChatViewController: UIViewController {
     private var eventsTask: Task<Void, Never>?
     private var welcomePlaceholder: UIView?
     private var hasPersistedWelcome = false
+    private var pendingBubble: UIView?
     private var isLoadingInitialState = false {
         didSet { updateComposerState() }
     }
@@ -295,6 +296,7 @@ public final class HermesLiveChatViewController: UIViewController {
         guard !text.isEmpty else { return }
         input.text = ""
         isSending = true
+        showPendingBubble(text)
         Task {
             defer {
                 Task { @MainActor in
@@ -304,9 +306,13 @@ public final class HermesLiveChatViewController: UIViewController {
             await ensureSession()
             do {
                 let messages = try await HermesLiveChat.shared.sendTextMessages(text)
-                await MainActor.run { messages.forEach(addMessage) }
+                await MainActor.run {
+                    removePendingBubble()
+                    messages.forEach(addMessage)
+                }
             } catch {
                 await MainActor.run {
+                    removePendingBubble()
                     input.text = text
                     addSystem("发送失败")
                 }
@@ -407,6 +413,23 @@ public final class HermesLiveChatViewController: UIViewController {
         stack.removeArrangedSubview(view)
         view.removeFromSuperview()
         welcomePlaceholder = nil
+    }
+
+    // showPendingBubble renders the visitor's outgoing text optimistically while
+    // the send is in flight. It is appended after the welcome placeholder, so the
+    // greeting stays on top; removePendingBubble clears it before the server's
+    // ordered [welcome, visitor] messages are added, which keeps the welcome
+    // above the confirmed message instead of being re-appended below it.
+    private func showPendingBubble(_ text: String) {
+        removePendingBubble()
+        pendingBubble = addBubble(text, mine: true, createdAt: nil)
+    }
+
+    private func removePendingBubble() {
+        guard let view = pendingBubble else { return }
+        stack.removeArrangedSubview(view)
+        view.removeFromSuperview()
+        pendingBubble = nil
     }
 
     private func addMessage(_ message: Message) {

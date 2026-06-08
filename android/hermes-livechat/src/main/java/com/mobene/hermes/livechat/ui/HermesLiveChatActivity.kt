@@ -72,6 +72,7 @@ class HermesLiveChatActivity : Activity() {
     private val readMarkedMessageIds = mutableSetOf<String>()
     private var welcomePlaceholder: View? = null
     private var hasPersistedWelcome = false
+    private var pendingBubble: View? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -424,13 +425,18 @@ class HermesLiveChatActivity : Activity() {
         if (text.isEmpty() || sending || uploadingImage) return
         input.setText("")
         setSending(true)
+        showPendingBubble(text)
         scope.launch {
             runCatching {
                 if (!started) {
                     startSessionAndLoadHistory()
                 }
                 HermesLiveChat.sendTextMessages(text)
-            }.onSuccess { it.forEach(::addMessage) }.onFailure {
+            }.onSuccess {
+                removePendingBubble()
+                it.forEach(::addMessage)
+            }.onFailure {
+                removePendingBubble()
                 input.setText(text)
                 addSystemMessage(it.message ?: "发送失败")
             }.also {
@@ -552,6 +558,21 @@ class HermesLiveChatActivity : Activity() {
     private fun removeWelcomePlaceholder() {
         welcomePlaceholder?.let(messages::removeView)
         welcomePlaceholder = null
+    }
+
+    // showPendingBubble renders the visitor's outgoing text optimistically while
+    // the send is in flight. It is appended after the welcome placeholder, so the
+    // greeting stays on top; removePendingBubble clears it before the server's
+    // ordered [welcome, visitor] messages are added, which keeps the welcome
+    // above the confirmed message instead of being re-appended below it.
+    private fun showPendingBubble(text: String) {
+        removePendingBubble()
+        pendingBubble = addBubble(text, mine = true)
+    }
+
+    private fun removePendingBubble() {
+        pendingBubble?.let(messages::removeView)
+        pendingBubble = null
     }
 
     private fun addMessage(message: Message) {
