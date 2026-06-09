@@ -34,9 +34,15 @@ internal struct StoredSession: Codable {
 
 internal final class SessionStore {
     private let service = "com.mobene.hermes.livechat.session"
+    // Sessions are scoped to the server that issued them: the same appKey on a
+    // different baseUrl is a different backend with its own visitor token and
+    // realtime URL, so reusing a cached session across servers would silently
+    // talk to the old one. configure() sets this to the active baseUrl and it is
+    // folded into the storage key.
+    var scope: String = ""
 
     func load(appKey: String) -> StoredSession? {
-        if let data = KeychainStore.read(service: service, account: appKey) {
+        if let data = KeychainStore.read(service: service, account: account(appKey)) {
             return try? JSONDecoder().decode(StoredSession.self, from: data)
         }
         let legacyKey = userDefaultsKey(appKey)
@@ -49,14 +55,18 @@ internal final class SessionStore {
 
     func save(_ session: StoredSession) {
         if let data = try? JSONEncoder().encode(session) {
-            if KeychainStore.write(data, service: service, account: session.appKey) {
+            if KeychainStore.write(data, service: service, account: account(session.appKey)) {
                 UserDefaults.standard.removeObject(forKey: userDefaultsKey(session.appKey))
             }
         }
     }
 
+    private func account(_ appKey: String) -> String {
+        "\(scope)|\(appKey)"
+    }
+
     private func userDefaultsKey(_ appKey: String) -> String {
-        "hermes.livechat.session.\(appKey)"
+        "hermes.livechat.session.\(scope)|\(appKey)"
     }
 }
 

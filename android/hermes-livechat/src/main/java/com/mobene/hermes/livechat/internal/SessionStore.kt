@@ -36,9 +36,14 @@ internal fun StoredSession.toVisitorSession(defaultRealtimeUrl: String) = Visito
     realtimeUrl = realtimeUrl ?: defaultRealtimeUrl,
 )
 
-internal class SessionStore(context: Context) {
+internal class SessionStore(context: Context, baseUrl: String) {
     private val prefs: SharedPreferences = context.getSharedPreferences("hermes_livechat", Context.MODE_PRIVATE)
     private val crypto = SessionCrypto()
+    // Sessions are scoped to the server that issued them: the same appKey on a
+    // different baseUrl is a different backend with its own visitor token and
+    // realtime URL, so reusing a cached session across servers would silently
+    // talk to the old one. Normalize once here and fold it into the storage key.
+    private val scope = baseUrl.trimEnd('/')
 
     fun load(appKey: String): StoredSession? {
         val encryptedKey = encryptedKey(appKey)
@@ -90,9 +95,9 @@ internal class SessionStore(context: Context) {
         )
     }
 
-    private fun legacyKey(appKey: String) = "session:$appKey"
+    private fun legacyKey(appKey: String) = "session:$scope|$appKey"
 
-    private fun encryptedKey(appKey: String) = "session:$appKey:v2"
+    private fun encryptedKey(appKey: String) = "session:$scope|$appKey:v2"
 }
 
 private class SessionCrypto {

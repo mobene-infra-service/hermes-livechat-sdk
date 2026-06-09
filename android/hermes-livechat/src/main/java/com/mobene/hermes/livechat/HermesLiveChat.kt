@@ -46,7 +46,7 @@ object HermesLiveChat {
         disconnectRealtime()
         this.config = config
         api = ApiClient(config)
-        store = SessionStore(context.applicationContext)
+        store = SessionStore(context.applicationContext, config.baseUrl)
         realtime = CentrifugeRealtime(
             emit = { emitRealtimeEvent(it) },
             onPublicationReceived = { handlePublication(it) },

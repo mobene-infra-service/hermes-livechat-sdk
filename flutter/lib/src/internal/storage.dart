@@ -54,12 +54,19 @@ class SessionStore {
   SessionStore({
     FlutterSecureStorage? backend,
     this.namespace = 'hermes_livechat',
+    this.scope = '',
   }) : _backend = backend ?? const FlutterSecureStorage();
 
   final FlutterSecureStorage _backend;
   final String namespace;
 
-  String _keyFor(String appKey) => '$namespace:$appKey';
+  // Sessions are scoped to the server that issued them: the same appKey on a
+  // different baseUrl is a different backend with its own visitor token and
+  // realtime URL, so reusing a cached session across servers would silently
+  // talk to the old one. Set to the active baseUrl and folded into the key.
+  final String scope;
+
+  String _keyFor(String appKey) => '$namespace:$scope|$appKey';
 
   Future<StoredSession?> load(String appKey) async {
     final raw = await _backend.read(key: _keyFor(appKey));

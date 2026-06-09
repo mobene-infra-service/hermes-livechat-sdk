@@ -22,6 +22,7 @@ public final class HermesLiveChat {
     public func configure(_ config: HermesLiveChatConfig) {
         disconnect()
         self.config = config
+        self.store.scope = config.baseUrl.absoluteString
         self.api = ApiClient(config: config)
         self.realtime = RealtimeClient(
             emit: { [weak self] event in self?.emitRealtimeEvent(event) },

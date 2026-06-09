@@ -21,7 +21,7 @@ class Session {
     SessionStore? store,
   })  : api = api ?? ApiClient(config),
         transport = transport ?? CentrifugeRealtime(),
-        store = store ?? SessionStore();
+        store = store ?? SessionStore(scope: config.normalizedBaseUrl);
 
   final HermesLiveChatConfig config;
   final ApiClient api;
