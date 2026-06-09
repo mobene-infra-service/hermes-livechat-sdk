@@ -94,12 +94,19 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
   bool _uploadingImage = false;
   bool _hasSession = false;
   bool _conversationClosed = false;
+  // Closed-conversation ids whose messages can be pulled in as history on
+  // demand. Populated when a session opens; the messages themselves are not
+  // loaded until the visitor taps the toggle bar or scrolls to the top.
+  List<String> _historyConversationIds = const [];
+  bool _historyExpanded = false;
+  bool _historyLoading = false;
 
   @override
   void initState() {
     super.initState();
     _client = widget.client ?? HermesLiveChat.instance;
     _events = _client.events.listen(_handleEvent);
+    _scroll.addListener(_onScroll);
     _bootstrap();
   }
 
@@ -107,6 +114,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
   void dispose() {
     unawaited(_events?.cancel());
     _input.dispose();
+    _scroll.removeListener(_onScroll);
     _scroll.dispose();
     super.dispose();
   }
@@ -158,6 +166,19 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
       if (!mounted) return;
       _hasSession = true;
       final conversationId = _client.currentConversationId;
+      // Closed conversations are not loaded eagerly: record their ids so the
+      // toggle bar knows there is earlier history to pull in on demand.
+      try {
+        final conversations = await _client.conversations();
+        if (!mounted) return;
+        _historyConversationIds = _closedConversationIds(
+          conversations,
+          conversationId,
+        );
+      } catch (_) {
+        // History discovery is best-effort; the active thread and sending still
+        // work without it.
+      }
       if (conversationId != null && conversationId.isNotEmpty) {
         final history = await _client.history(conversationId: conversationId);
         if (!mounted) return;
@@ -299,7 +320,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
     }
   }
 
-  void _mergeMessages(Iterable<Message> items) {
+  void _mergeMessages(Iterable<Message> items, {bool scrollToBottom = true}) {
     var changed = false;
     for (final message in items) {
       final key = message.uuid.isNotEmpty ? message.uuid : message.clientMsgId;
@@ -311,9 +332,94 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
     if (changed) {
       _messages.sort(_compareMessages);
       setState(() {});
-      _scrollToBottom();
+      if (scrollToBottom) _scrollToBottom();
     }
     _markVisibleMessagesRead();
+  }
+
+  // _closedConversationIds lists the most recent closed conversations whose
+  // messages can be pulled in as history, newest first and capped to keep the
+  // on-demand fetch bounded. The active conversation (if any) is excluded — it
+  // is the live thread, not history.
+  List<String> _closedConversationIds(
+    List<Conversation> conversations,
+    String? activeId,
+  ) {
+    final ids = <String>[];
+    for (final item in conversations) {
+      if (ids.length >= 3) break;
+      if (item.uuid.isEmpty || item.uuid == activeId) continue;
+      if (item.status != 'closed') continue;
+      if (!ids.contains(item.uuid)) ids.add(item.uuid);
+    }
+    return ids;
+  }
+
+  // _onScroll pulls in collapsed history when the visitor reaches the very top,
+  // mirroring the toggle bar tap. Guarded inside _loadHistory so it fires once.
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    if (_scroll.position.pixels <= _scroll.position.minScrollExtent) {
+      unawaited(_loadHistory());
+    }
+  }
+
+  // _loadHistory pulls in earlier closed-conversation messages on demand and
+  // reveals them while keeping the visitor anchored: prepending older messages
+  // above the viewport would otherwise yank the scroll position, so we offset by
+  // the height that appears. The fetch runs once; failures reset so the visitor
+  // can retry by tapping the bar again.
+  Future<void> _loadHistory() async {
+    if (_historyExpanded ||
+        _historyLoading ||
+        _historyConversationIds.isEmpty) {
+      return;
+    }
+    setState(() => _historyLoading = true);
+    final beforeMax =
+        _scroll.hasClients ? _scroll.position.maxScrollExtent : 0.0;
+    final beforePixels = _scroll.hasClients ? _scroll.position.pixels : 0.0;
+    try {
+      final loaded = <Message>[];
+      for (final conversationId in _historyConversationIds) {
+        loaded.addAll(
+          await _client.conversationMessages(conversationId: conversationId),
+        );
+      }
+      if (!mounted) return;
+      _historyExpanded = true;
+      _mergeMessages(loaded, scrollToBottom: false);
+      _anchorAfterPrepend(beforeMax, beforePixels);
+    } on HermesLiveChatException catch (error) {
+      _handleError(error);
+    } catch (error) {
+      _handleError(
+        HermesLiveChatException(
+          HermesLiveChatError.unknown,
+          message: error.toString(),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _historyLoading = false);
+    }
+  }
+
+  // _anchorAfterPrepend keeps the reading position fixed once the prepended
+  // history has laid out: the scrollable grew by (afterMax - beforeMax) above
+  // the viewport, so we push the offset down by the same amount.
+  void _anchorAfterPrepend(double beforeMax, double beforePixels) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      final afterMax = _scroll.position.maxScrollExtent;
+      final delta = afterMax - beforeMax;
+      if (delta <= 0) return;
+      _scroll.jumpTo(
+        (beforePixels + delta).clamp(
+          _scroll.position.minScrollExtent,
+          afterMax,
+        ),
+      );
+    });
   }
 
   void _markVisibleMessagesRead() {
@@ -400,14 +506,23 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
       return const Center(child: _TypingLoader(label: '正在加载会话'));
     }
 
-    final hasPersistedWelcome =
-        _messages.any((message) => message.contentType == 'welcome');
-    final hasWelcome = _welcome != null &&
-        !_hasSession &&
-        _messages.isEmpty &&
-        !hasPersistedWelcome;
-    final count = _messages.length + (hasWelcome ? 1 : 0);
-    if (count == 0) {
+    // Show the prefetched welcome whenever there is no active conversation —
+    // first visit, or the previous one is closed. Closed-conversation history
+    // may sit above it, but the new chat starts with its own greeting.
+    final showWelcome = _welcome != null && !_hasActiveConversation();
+    final visible = <Message>[..._messages];
+    if (showWelcome) {
+      visible.add(_welcomeMessage());
+      visible.sort(_compareMessages);
+    }
+
+    // On a fresh chat earlier closed-conversation history is not loaded yet.
+    // While it is unloaded, a "view earlier messages" bar sits at the top;
+    // tapping it (or scrolling to the top) pulls the messages in.
+    final showHistoryToggle =
+        _historyConversationIds.isNotEmpty && !_historyExpanded;
+
+    if (visible.isEmpty && !showHistoryToggle) {
       return Center(
         child: Text(
           '开始输入消息',
@@ -416,28 +531,107 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
       );
     }
 
+    final headerCount = showHistoryToggle ? 1 : 0;
     return ListView.builder(
       controller: _scroll,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      itemCount: count,
+      itemCount: visible.length + headerCount,
       itemBuilder: (context, index) {
-        if (hasWelcome && index == 0) {
-          return _MessageBubble(
-            text: _welcome!,
-            mine: false,
-            senderType: 'system',
+        if (showHistoryToggle && index == 0) {
+          return _HistoryToggle(
+            loading: _historyLoading,
+            onTap: _historyLoading ? null : () => unawaited(_loadHistory()),
           );
         }
-        final message = _messages[index - (hasWelcome ? 1 : 0)];
+        final message = visible[index - headerCount];
         return _MessageBubble.fromMessage(message);
       },
+    );
+  }
+
+  bool _hasActiveConversation() {
+    final id = _client.currentConversationId;
+    return id != null && id.isNotEmpty;
+  }
+
+  // _welcomeMessage builds the synthetic greeting bubble. Its createdAt is
+  // anchored one second before the forming chat's earliest message so it lands
+  // after any closed-conversation history and above the visitor's first message;
+  // it falls back to "now" when shown on its own. Re-stamping "now" each render
+  // would let the greeting drift below an already-sent message.
+  Message _welcomeMessage() {
+    return Message(
+      uuid: 'welcome',
+      conversationId: '',
+      clientMsgId: 'welcome',
+      senderType: 'system',
+      senderId: 'system',
+      contentType: 'welcome',
+      content: {'text': _welcome},
+      createdAt: _welcomeCreatedAt(),
+    );
+  }
+
+  int _welcomeCreatedAt() {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final historyIds = _historyConversationIds.toSet();
+    var earliest = -1;
+    for (final message in _messages) {
+      // Closed-conversation history is older and stays above the welcome.
+      if (historyIds.contains(message.conversationId)) continue;
+      if (earliest < 0 || message.createdAt < earliest) {
+        earliest = message.createdAt;
+      }
+    }
+    if (earliest < 0) return now;
+    final anchored = earliest - 1;
+    return anchored < now ? anchored : now;
+  }
+}
+
+class _HistoryToggle extends StatelessWidget {
+  const _HistoryToggle({required this.loading, this.onTap});
+
+  final bool loading;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final label = loading ? '正在加载更早消息...' : '查看更早消息';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Center(
+        child: TextButton(
+          onPressed: onTap,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (loading) ...[
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Text(
+                label,
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
 
 class _ConnectionBar extends StatelessWidget {
   const _ConnectionBar({required this.state});
-
   final ConnectionState state;
 
   @override

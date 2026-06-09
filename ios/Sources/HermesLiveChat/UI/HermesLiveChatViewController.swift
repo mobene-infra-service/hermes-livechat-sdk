@@ -42,6 +42,13 @@ public final class HermesLiveChatViewController: UIViewController {
     private var welcomePlaceholder: UIView?
     private var hasPersistedWelcome = false
     private var pendingBubble: UIView?
+    // Closed-conversation ids whose messages can be pulled in as history on
+    // demand. Populated when a session opens; the messages themselves are not
+    // loaded until the visitor taps the toggle bar or scrolls to the top.
+    private var historyConversationIds: [String] = []
+    private var historyExpanded = false
+    private var historyLoading = false
+    private var historyToggle: UIButton?
     private var isLoadingInitialState = false {
         didSet { updateComposerState() }
     }
@@ -109,6 +116,7 @@ public final class HermesLiveChatViewController: UIViewController {
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.alwaysBounceVertical = true
         scroll.keyboardDismissMode = .interactive
+        scroll.delegate = self
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.addSubview(stack)
         let tap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
@@ -274,20 +282,43 @@ public final class HermesLiveChatViewController: UIViewController {
             try await HermesLiveChat.shared.startSession(identity)
             started = true
             let activeId = HermesLiveChat.shared.currentConversationId
+            // Closed conversations are not loaded eagerly: record their ids so
+            // the toggle bar knows there is earlier history to pull in on demand.
+            let closedIds = (try? await HermesLiveChat.shared.conversations())
+                .map { Self.closedConversationIds($0, activeId: activeId) } ?? []
             if let id = activeId {
                 let messages = try await HermesLiveChat.shared.history(conversationId: id)
                 await MainActor.run { messages.forEach(addMessage) }
             }
             // Render the prefetched welcome whenever there is no active
             // conversation — first visit, or the previous one is closed.
-            // Closed-conversation history may still be on screen, but that
-            // belongs to the prior chat; the new chat starts fresh.
+            // Closed-conversation history is collapsed behind the toggle; the
+            // new chat starts with its greeting on top.
             if activeId == nil {
                 await loadWelcome()
+            }
+            await MainActor.run {
+                historyConversationIds = closedIds
+                refreshHistoryToggle()
             }
         } catch {
             await MainActor.run { addSystem("初始化会话失败") }
         }
+    }
+
+    // closedConversationIds lists the most recent closed conversations whose
+    // messages can be pulled in as history, newest first and capped to keep the
+    // on-demand fetch bounded. The active conversation (if any) is excluded — it
+    // is the live thread, not history.
+    private static func closedConversationIds(_ conversations: [Conversation], activeId: String?) -> [String] {
+        var ids: [String] = []
+        for item in conversations {
+            if ids.count >= 3 { break }
+            if item.uuid.isEmpty || item.uuid == activeId { continue }
+            if item.status != "closed" { continue }
+            if !ids.contains(item.uuid) { ids.append(item.uuid) }
+        }
+        return ids
     }
 
     @objc private func sendTapped() {
@@ -432,6 +463,90 @@ public final class HermesLiveChatViewController: UIViewController {
         pendingBubble = nil
     }
 
+    // refreshHistoryToggle shows or hides the "view earlier messages" bar at the
+    // top of the list. It appears only while there is unloaded closed history.
+    private func refreshHistoryToggle() {
+        let shouldShow = !historyConversationIds.isEmpty && !historyExpanded
+        guard shouldShow else {
+            if let toggle = historyToggle {
+                stack.removeArrangedSubview(toggle)
+                toggle.removeFromSuperview()
+                historyToggle = nil
+            }
+            return
+        }
+        let toggle = historyToggle ?? makeHistoryToggle()
+        if historyToggle == nil {
+            historyToggle = toggle
+            stack.insertArrangedSubview(toggle, at: 0)
+        } else if stack.arrangedSubviews.first !== toggle {
+            stack.removeArrangedSubview(toggle)
+            stack.insertArrangedSubview(toggle, at: 0)
+        }
+        toggle.setTitle(historyLoading ? "正在加载更早消息..." : "查看更早消息", for: .normal)
+        toggle.isEnabled = !historyLoading
+    }
+
+    private func makeHistoryToggle() -> UIButton {
+        let button = UIButton(type: .system)
+        button.titleLabel?.font = .preferredFont(forTextStyle: .footnote)
+        button.setTitleColor(.secondaryLabel, for: .normal)
+        button.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)
+        button.addTarget(self, action: #selector(historyToggleTapped), for: .touchUpInside)
+        return button
+    }
+
+    @objc private func historyToggleTapped() {
+        Task { await loadHistory() }
+    }
+
+    // loadHistory pulls in earlier closed-conversation messages on demand and
+    // reveals them while keeping the visitor's view anchored: prepending older
+    // messages above the viewport would otherwise yank the scroll position, so we
+    // offset by the height that appears. The fetch runs once; failures reset so
+    // the visitor can retry by tapping the bar again.
+    private func loadHistory() async {
+        guard !historyExpanded, !historyLoading, !historyConversationIds.isEmpty else { return }
+        historyLoading = true
+        await MainActor.run { refreshHistoryToggle() }
+        do {
+            var loaded: [Message] = []
+            for conversationId in historyConversationIds {
+                loaded += try await HermesLiveChat.shared.conversationMessages(conversationId: conversationId)
+            }
+            await MainActor.run {
+                historyExpanded = true
+                prependHistory(loaded)
+            }
+        } catch {
+            await MainActor.run { addSystem("加载更早消息失败") }
+        }
+        historyLoading = false
+        await MainActor.run { refreshHistoryToggle() }
+    }
+
+    // prependHistory inserts older messages above the current chat, below the
+    // toggle bar, and keeps the visitor anchored on what they were reading by
+    // offsetting the scroll by the height the inserted rows added.
+    private func prependHistory(_ history: [Message]) {
+        view.layoutIfNeeded()
+        let previousHeight = scroll.contentSize.height
+        let previousOffset = scroll.contentOffset.y
+        var insertAt = historyToggle != nil ? 1 : 0
+        for message in history {
+            if let key = messageKey(message), !messageKeys.insert(key).inserted { continue }
+            let row = makeMessageRow(message, mine: message.senderType == "visitor")
+            stack.insertArrangedSubview(row, at: insertAt)
+            insertAt += 1
+            markMessageReadIfNeeded(message)
+        }
+        // Hide the toggle now that history is loaded, then restore the reading
+        // position once layout settles with the new rows measured.
+        refreshHistoryToggle()
+        view.layoutIfNeeded()
+        scroll.contentOffset.y = previousOffset + (scroll.contentSize.height - previousHeight)
+    }
+
     private func addMessage(_ message: Message) {
         if let key = messageKey(message), !messageKeys.insert(key).inserted {
             return
@@ -485,14 +600,21 @@ public final class HermesLiveChatViewController: UIViewController {
 
     @discardableResult
     private func addBubble(_ message: Message, mine: Bool) -> UIView {
+        let row = makeMessageRow(message, mine: mine)
+        stack.addArrangedSubview(row)
+        scrollToBottom()
+        return row
+    }
+
+    // makeMessageRow builds a message row without appending it or scrolling, so
+    // callers can insert it at an arbitrary position (e.g. prepended history).
+    private func makeMessageRow(_ message: Message, mine: Bool) -> UIView {
         let bubble = makeMessageBubbleView(message, mine: mine)
         let column = makeBubbleColumn(mine: mine, bubble: bubble, createdAt: message.createdAt)
         let row = UIView()
         row.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(column)
-        stack.addArrangedSubview(row)
         activateBubbleConstraints(row: row, column: column, bubble: bubble, mine: mine)
-        scrollToBottom()
         return row
     }
 
@@ -643,6 +765,16 @@ extension HermesLiveChatViewController: UITextFieldDelegate {
     public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         sendTapped()
         return false
+    }
+}
+
+extension HermesLiveChatViewController: UIScrollViewDelegate {
+    public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        // Pulling to the very top reveals collapsed history, mirroring the toggle
+        // bar tap. Guarded inside loadHistory so it fires at most once.
+        if scrollView.contentOffset.y <= -scrollView.adjustedContentInset.top {
+            Task { await loadHistory() }
+        }
     }
 }
 

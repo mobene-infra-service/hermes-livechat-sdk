@@ -193,12 +193,28 @@ object HermesLiveChat {
     ): List<Message> {
         val messages = requireApi().history(validToken(), conversationId, afterId, limit)
         rememberConversation(conversationId)
-        return messages.sortedWith(
-            compareBy<Message> { it.createdAt }
-                .thenBy { messageSortRank(it) }
-                .thenBy { it.uuid },
-        )
+        return sortMessages(messages)
     }
+
+    // conversations lists the visitor's recent conversations (active + closed),
+    // newest first. Used by the UI to discover closed-conversation ids it can
+    // pull in as history on demand.
+    suspend fun conversations(): List<Conversation> = requireApi().conversations(validToken())
+
+    // conversationMessages fetches a conversation's messages WITHOUT marking it as
+    // the current conversation — unlike history(), which remembers it. Loading a
+    // closed conversation as history must not move the active-conversation pointer.
+    suspend fun conversationMessages(
+        conversationId: String,
+        afterId: String? = null,
+        limit: Int = 50,
+    ): List<Message> = sortMessages(requireApi().history(validToken(), conversationId, afterId, limit))
+
+    private fun sortMessages(messages: List<Message>): List<Message> = messages.sortedWith(
+        compareBy<Message> { it.createdAt }
+            .thenBy { messageSortRank(it) }
+            .thenBy { it.uuid },
+    )
 
     private fun handleSendResult(result: SendMessageResult): SendMessageResult {
         val conversation = result.conversation

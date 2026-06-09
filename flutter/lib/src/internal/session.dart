@@ -257,6 +257,32 @@ class Session {
     return [...messages]..sort(_compareMessages);
   }
 
+  // conversations lists the visitor's recent conversations (active + closed),
+  // newest first. Used by the UI to discover closed-conversation ids it can pull
+  // in as history on demand.
+  Future<List<Conversation>> conversations() async {
+    final token = await _validToken();
+    return api.listConversations(visitorToken: token);
+  }
+
+  // conversationMessages fetches a conversation's messages WITHOUT marking it as
+  // the current conversation — unlike history(), which remembers it. Loading a
+  // closed conversation as history must not move the active-conversation pointer.
+  Future<List<Message>> conversationMessages({
+    required String conversationId,
+    String? afterId,
+    int limit = 50,
+  }) async {
+    final token = await _validToken();
+    final messages = await api.listMessages(
+      visitorToken: token,
+      conversationId: conversationId,
+      afterId: afterId,
+      limit: limit,
+    );
+    return [...messages]..sort(_compareMessages);
+  }
+
   Future<void> ensureConnected() async {
     final stored = _stored;
     if (stored == null) return;

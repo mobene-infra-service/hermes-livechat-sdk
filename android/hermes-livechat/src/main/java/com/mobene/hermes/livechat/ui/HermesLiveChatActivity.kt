@@ -29,6 +29,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.mobene.hermes.livechat.Conversation
 import com.mobene.hermes.livechat.HermesLiveChat
 import com.mobene.hermes.livechat.HermesLiveChatEvent
 import com.mobene.hermes.livechat.LiveChatConnectionState
@@ -73,6 +74,13 @@ class HermesLiveChatActivity : Activity() {
     private var welcomePlaceholder: View? = null
     private var hasPersistedWelcome = false
     private var pendingBubble: View? = null
+    // Closed-conversation ids whose messages can be pulled in as history on
+    // demand. Populated when a session opens; the messages themselves are not
+    // loaded until the visitor taps the toggle bar or scrolls to the top.
+    private var historyConversationIds: List<String> = emptyList()
+    private var historyExpanded = false
+    private var historyLoading = false
+    private var historyToggle: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -138,6 +146,11 @@ class HermesLiveChatActivity : Activity() {
             isFillViewport = true
             clipToPadding = false
             setPadding(0, dp(6), 0, dp(8))
+            // Pulling to the very top reveals collapsed history, mirroring the
+            // toggle bar tap. Guarded inside loadHistory so it fires at most once.
+            setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                if (scrollY <= 0) loadHistory()
+            }
         }
         messages = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -526,15 +539,116 @@ class HermesLiveChatActivity : Activity() {
         HermesLiveChat.startSession(identity)
         started = true
         val activeId = HermesLiveChat.currentConversationId
+        // Closed conversations are not loaded eagerly: record their ids so the
+        // toggle bar knows there is earlier history to pull in on demand.
+        historyConversationIds = runCatching {
+            closedConversationIds(HermesLiveChat.conversations(), activeId)
+        }.getOrDefault(emptyList())
         activeId?.let { conversationId ->
             HermesLiveChat.history(conversationId).forEach(::addMessage)
         }
         // Render the prefetched welcome whenever there is no active
         // conversation — first visit, or the previous one is closed.
-        // Closed-conversation history may still be on screen, but that
-        // belongs to the prior chat; the new chat starts fresh.
+        // Closed-conversation history is collapsed behind the toggle; the new
+        // chat starts with its greeting on top.
         if (activeId == null) {
             loadWelcomeOnce()
+        }
+        refreshHistoryToggle()
+    }
+
+    // closedConversationIds lists the most recent closed conversations whose
+    // messages can be pulled in as history, newest first and capped to keep the
+    // on-demand fetch bounded. The active conversation (if any) is excluded — it
+    // is the live thread, not history.
+    private fun closedConversationIds(conversations: List<Conversation>, activeId: String?): List<String> {
+        val ids = mutableListOf<String>()
+        for (item in conversations) {
+            if (ids.size >= 3) break
+            if (item.uuid.isEmpty() || item.uuid == activeId) continue
+            if (item.status != "closed") continue
+            if (item.uuid !in ids) ids.add(item.uuid)
+        }
+        return ids
+    }
+
+    // refreshHistoryToggle shows or hides the "view earlier messages" bar at the
+    // top of the list. It appears only while there is unloaded closed history.
+    private fun refreshHistoryToggle() {
+        val shouldShow = historyConversationIds.isNotEmpty() && !historyExpanded
+        if (!shouldShow) {
+            historyToggle?.let(messages::removeView)
+            historyToggle = null
+            return
+        }
+        val toggle = historyToggle ?: buildHistoryToggle().also {
+            historyToggle = it
+            messages.addView(it, 0)
+        }
+        if (messages.indexOfChild(toggle) != 0) {
+            messages.removeView(toggle)
+            messages.addView(toggle, 0)
+        }
+        toggle.text = if (historyLoading) "正在加载更早消息..." else "查看更早消息"
+        toggle.isEnabled = !historyLoading
+    }
+
+    private fun buildHistoryToggle(): TextView = TextView(this).apply {
+        textSize = 13f
+        setTextColor(TEXT_SECONDARY)
+        gravity = Gravity.CENTER
+        setPadding(dp(16), dp(10), dp(16), dp(10))
+        setOnClickListener { loadHistory() }
+    }
+
+    // loadHistory pulls in earlier closed-conversation messages on demand and
+    // reveals them while keeping the visitor's view anchored: prepending older
+    // messages above the viewport would otherwise yank the scroll position, so we
+    // offset by the height that appears. The fetch runs once; failures reset so
+    // the visitor can retry by tapping the bar again.
+    private fun loadHistory() {
+        if (historyExpanded || historyLoading || historyConversationIds.isEmpty()) return
+        historyLoading = true
+        refreshHistoryToggle()
+        scope.launch {
+            runCatching {
+                val loaded = mutableListOf<Message>()
+                for (conversationId in historyConversationIds) {
+                    loaded += HermesLiveChat.conversationMessages(conversationId)
+                }
+                loaded
+            }.onSuccess { loaded ->
+                historyExpanded = true
+                prependHistory(loaded)
+            }.onFailure {
+                addSystemMessage(it.message ?: "加载更早消息失败")
+            }.also {
+                historyLoading = false
+                refreshHistoryToggle()
+            }
+        }
+    }
+
+    // prependHistory inserts older messages above the current chat, below the
+    // toggle bar, and keeps the visitor anchored on what they were reading by
+    // offsetting the scroll by the height the inserted rows added.
+    private fun prependHistory(history: List<Message>) {
+        val previousHeight = messages.height
+        val previousScroll = scroll.scrollY
+        var insertAt = if (historyToggle != null) 1 else 0
+        for (message in history) {
+            val key = messageKey(message)
+            if (key != null && !messageKeys.add(key)) continue
+            val row = buildMessageRow(message, mine = message.senderType == "visitor")
+            messages.addView(row, insertAt)
+            insertAt += 1
+            markMessageReadIfNeeded(message)
+        }
+        // Hide the toggle now that history is loaded, then restore the reading
+        // position once layout settles with the new rows measured.
+        refreshHistoryToggle()
+        scroll.post {
+            scroll.scrollTo(0, previousScroll + (messages.height - previousHeight))
         }
     }
 
@@ -631,6 +745,13 @@ class HermesLiveChatActivity : Activity() {
     }
 
     private fun addBubble(message: Message, mine: Boolean): View {
+        val row = buildMessageRow(message, mine)
+        messages.addView(row)
+        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+        return row
+    }
+
+    private fun buildMessageRow(message: Message, mine: Boolean): View {
         val row = bubbleRow(mine)
         val column = bubbleColumn(mine).apply {
             val imageUrl = if (message.contentType == "image") message.content.optString("url").trim() else ""
@@ -644,8 +765,6 @@ class HermesLiveChatActivity : Activity() {
             if (message.createdAt > 0) addView(bubbleTimestamp(message.createdAt))
         }
         row.addView(column)
-        messages.addView(row)
-        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
         return row
     }
 

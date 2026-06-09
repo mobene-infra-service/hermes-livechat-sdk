@@ -207,7 +207,31 @@ public final class HermesLiveChat {
             limit: limit
         )
         rememberConversation(conversationId)
-        return messages.sorted {
+        return sortMessages(messages)
+    }
+
+    // conversations lists the visitor's recent conversations (active + closed),
+    // newest first. Used by the UI to discover closed-conversation ids it can
+    // pull in as history on demand.
+    public func conversations() async throws -> [Conversation] {
+        try await requireApi().listConversations(token: try await validToken())
+    }
+
+    // conversationMessages fetches a conversation's messages WITHOUT marking it as
+    // the current conversation — unlike history(), which remembers it. Loading a
+    // closed conversation as history must not move the active-conversation pointer.
+    public func conversationMessages(conversationId: String, afterId: String? = nil, limit: Int = 50) async throws -> [Message] {
+        let messages = try await requireApi().history(
+            token: try await validToken(),
+            conversationId: conversationId,
+            afterId: afterId,
+            limit: limit
+        )
+        return sortMessages(messages)
+    }
+
+    private func sortMessages(_ messages: [Message]) -> [Message] {
+        messages.sorted {
             if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
             let leftRank = messageSortRank($0)
             let rightRank = messageSortRank($1)

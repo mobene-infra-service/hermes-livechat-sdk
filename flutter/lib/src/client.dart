@@ -91,6 +91,23 @@ class HermesLiveChat {
         limit: limit,
       );
 
+  /// Lists the visitor's recent conversations (active + closed), newest first.
+  Future<List<Conversation>> conversations() => _require().conversations();
+
+  /// Fetches a conversation's messages without marking it as the current
+  /// conversation. Use this to pull in closed-conversation history on demand;
+  /// [history] is for the active thread and moves the conversation pointer.
+  Future<List<Message>> conversationMessages({
+    required String conversationId,
+    String? afterId,
+    int limit = 50,
+  }) =>
+      _require().conversationMessages(
+        conversationId: conversationId,
+        afterId: afterId,
+        limit: limit,
+      );
+
   Future<void> disconnect() => _require().disconnect();
 
   Future<void> destroy() async {
