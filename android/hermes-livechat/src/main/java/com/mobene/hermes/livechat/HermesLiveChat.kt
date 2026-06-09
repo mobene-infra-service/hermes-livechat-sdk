@@ -189,7 +189,7 @@ object HermesLiveChat {
     suspend fun history(
         conversationId: String,
         afterId: String? = null,
-        limit: Int = 50,
+        limit: Int = 80,
     ): List<Message> {
         val messages = requireApi().history(validToken(), conversationId, afterId, limit)
         rememberConversation(conversationId)
@@ -207,7 +207,7 @@ object HermesLiveChat {
     suspend fun conversationMessages(
         conversationId: String,
         afterId: String? = null,
-        limit: Int = 50,
+        limit: Int = 80,
     ): List<Message> = sortMessages(requireApi().history(validToken(), conversationId, afterId, limit))
 
     private fun sortMessages(messages: List<Message>): List<Message> = messages.sortedWith(

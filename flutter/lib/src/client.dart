@@ -83,7 +83,7 @@ class HermesLiveChat {
   Future<List<Message>> history({
     required String conversationId,
     String? afterId,
-    int limit = 50,
+    int limit = 80,
   }) =>
       _require().history(
         conversationId: conversationId,
@@ -100,7 +100,7 @@ class HermesLiveChat {
   Future<List<Message>> conversationMessages({
     required String conversationId,
     String? afterId,
-    int limit = 50,
+    int limit = 80,
   }) =>
       _require().conversationMessages(
         conversationId: conversationId,

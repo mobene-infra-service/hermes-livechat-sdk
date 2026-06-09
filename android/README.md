@@ -172,7 +172,7 @@ val imageMessage = HermesLiveChat.sendImage(
 ```kotlin
 val conversationId = HermesLiveChat.currentConversationId
 if (conversationId != null) {
-    val messages = HermesLiveChat.history(conversationId = conversationId, limit = 50)
+    val messages = HermesLiveChat.history(conversationId = conversationId, limit = 80)
     messages.lastOrNull()?.let {
         HermesLiveChat.markRead(conversationId = conversationId, messageId = it.uuid)
     }

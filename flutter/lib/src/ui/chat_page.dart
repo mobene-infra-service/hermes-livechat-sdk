@@ -323,9 +323,10 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
   void _mergeMessages(Iterable<Message> items, {bool scrollToBottom = true}) {
     var changed = false;
     for (final message in items) {
-      final key = message.uuid.isNotEmpty ? message.uuid : message.clientMsgId;
-      if (key.isEmpty || _messageKeys.contains(key)) continue;
-      _messageKeys.add(key);
+      final hasIdentity =
+          message.uuid.isNotEmpty || message.clientMsgId.isNotEmpty;
+      if (!hasIdentity || _hasMessageIdentity(message)) continue;
+      _rememberMessageKeys(message);
       _messages.add(message);
       changed = true;
     }
@@ -335,6 +336,17 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
       if (scrollToBottom) _scrollToBottom();
     }
     _markVisibleMessagesRead();
+  }
+
+  bool _hasMessageIdentity(Message message) {
+    return (message.uuid.isNotEmpty && _messageKeys.contains(message.uuid)) ||
+        (message.clientMsgId.isNotEmpty &&
+            _messageKeys.contains(message.clientMsgId));
+  }
+
+  void _rememberMessageKeys(Message message) {
+    if (message.uuid.isNotEmpty) _messageKeys.add(message.uuid);
+    if (message.clientMsgId.isNotEmpty) _messageKeys.add(message.clientMsgId);
   }
 
   // _closedConversationIds lists the most recent closed conversations whose
@@ -532,20 +544,25 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
     }
 
     final headerCount = showHistoryToggle ? 1 : 0;
-    return ListView.builder(
-      controller: _scroll,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      itemCount: visible.length + headerCount,
-      itemBuilder: (context, index) {
-        if (showHistoryToggle && index == 0) {
-          return _HistoryToggle(
-            loading: _historyLoading,
-            onTap: _historyLoading ? null : () => unawaited(_loadHistory()),
-          );
-        }
-        final message = visible[index - headerCount];
-        return _MessageBubble.fromMessage(message);
-      },
+    return RefreshIndicator(
+      onRefresh: _loadHistory,
+      notificationPredicate: (_) => showHistoryToggle && !_historyLoading,
+      child: ListView.builder(
+        controller: _scroll,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        itemCount: visible.length + headerCount,
+        itemBuilder: (context, index) {
+          if (showHistoryToggle && index == 0) {
+            return _HistoryToggle(
+              loading: _historyLoading,
+              onTap: _historyLoading ? null : () => unawaited(_loadHistory()),
+            );
+          }
+          final message = visible[index - headerCount];
+          return _MessageBubble.fromMessage(message);
+        },
+      ),
     );
   }
 

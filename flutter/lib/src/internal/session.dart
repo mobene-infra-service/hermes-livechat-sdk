@@ -244,7 +244,7 @@ class Session {
   Future<List<Message>> history({
     required String conversationId,
     String? afterId,
-    int limit = 50,
+    int limit = 80,
   }) async {
     final token = await _validToken();
     final messages = await api.listMessages(
@@ -271,7 +271,7 @@ class Session {
   Future<List<Message>> conversationMessages({
     required String conversationId,
     String? afterId,
-    int limit = 50,
+    int limit = 80,
   }) async {
     final token = await _validToken();
     final messages = await api.listMessages(

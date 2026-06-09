@@ -17,6 +17,7 @@ import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
@@ -74,6 +75,7 @@ class HermesLiveChatActivity : Activity() {
     private var welcomePlaceholder: View? = null
     private var hasPersistedWelcome = false
     private var pendingBubble: View? = null
+    private var pendingText: String? = null
     // Closed-conversation ids whose messages can be pulled in as history on
     // demand. Populated when a session opens; the messages themselves are not
     // loaded until the visitor taps the toggle bar or scrolls to the top.
@@ -81,6 +83,8 @@ class HermesLiveChatActivity : Activity() {
     private var historyExpanded = false
     private var historyLoading = false
     private var historyToggle: TextView? = null
+    private var historyPullStartY: Float? = null
+    private var historyPullTriggered = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -150,6 +154,10 @@ class HermesLiveChatActivity : Activity() {
             // toggle bar tap. Guarded inside loadHistory so it fires at most once.
             setOnScrollChangeListener { _, _, scrollY, _, _ ->
                 if (scrollY <= 0) loadHistory()
+            }
+            setOnTouchListener { _, event ->
+                handleHistoryPull(event)
+                false
             }
         }
         messages = LinearLayout(this).apply {
@@ -629,6 +637,40 @@ class HermesLiveChatActivity : Activity() {
         }
     }
 
+    private fun handleHistoryPull(event: MotionEvent) {
+        if (historyExpanded || historyLoading || historyConversationIds.isEmpty()) {
+            resetHistoryPull()
+            return
+        }
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                historyPullStartY = if (scroll.scrollY <= 0) event.rawY else null
+                historyPullTriggered = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (scroll.scrollY > 0) {
+                    resetHistoryPull()
+                    return
+                }
+                val startY = historyPullStartY ?: event.rawY.also {
+                    historyPullStartY = it
+                }
+                if (!historyPullTriggered && event.rawY - startY >= dp(historyPullThresholdDp)) {
+                    historyPullTriggered = true
+                    loadHistory()
+                }
+            }
+            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_CANCEL -> resetHistoryPull()
+        }
+    }
+
+    private fun resetHistoryPull() {
+        historyPullStartY = null
+        historyPullTriggered = false
+    }
+
     // prependHistory inserts older messages above the current chat, below the
     // toggle bar, and keeps the visitor anchored on what they were reading by
     // offsetting the scroll by the height the inserted rows added.
@@ -637,8 +679,8 @@ class HermesLiveChatActivity : Activity() {
         val previousScroll = scroll.scrollY
         var insertAt = if (historyToggle != null) 1 else 0
         for (message in history) {
-            val key = messageKey(message)
-            if (key != null && !messageKeys.add(key)) continue
+            if (hasMessageIdentity(message)) continue
+            rememberMessageKeys(message)
             val row = buildMessageRow(message, mine = message.senderType == "visitor")
             messages.addView(row, insertAt)
             insertAt += 1
@@ -681,21 +723,27 @@ class HermesLiveChatActivity : Activity() {
     // above the confirmed message instead of being re-appended below it.
     private fun showPendingBubble(text: String) {
         removePendingBubble()
+        pendingText = text
         pendingBubble = addBubble(text, mine = true)
     }
 
     private fun removePendingBubble() {
         pendingBubble?.let(messages::removeView)
         pendingBubble = null
+        pendingText = null
     }
 
     private fun addMessage(message: Message) {
-        val key = messageKey(message)
-        if (key != null && !messageKeys.add(key)) return
+        if (hasMessageIdentity(message)) {
+            if (matchesPending(message)) removePendingBubble()
+            return
+        }
+        rememberMessageKeys(message)
         if (message.contentType == "welcome") {
             hasPersistedWelcome = true
             removeWelcomePlaceholder()
         }
+        if (matchesPending(message)) removePendingBubble()
 
         addBubble(message, mine = message.senderType == "visitor")
         markMessageReadIfNeeded(message)
@@ -727,9 +775,20 @@ class HermesLiveChatActivity : Activity() {
         }
     }
 
-    private fun messageKey(message: Message): String? {
-        return message.uuid.takeIf { it.isNotBlank() }
-            ?: message.clientMsgId.takeIf { it.isNotBlank() }
+    private fun hasMessageIdentity(message: Message): Boolean =
+        message.uuid.takeIf { it.isNotBlank() }?.let(messageKeys::contains) == true ||
+            message.clientMsgId.takeIf { it.isNotBlank() }?.let(messageKeys::contains) == true
+
+    private fun rememberMessageKeys(message: Message) {
+        message.uuid.takeIf { it.isNotBlank() }?.let(messageKeys::add)
+        message.clientMsgId.takeIf { it.isNotBlank() }?.let(messageKeys::add)
+    }
+
+    private fun matchesPending(message: Message): Boolean {
+        val text = pendingText ?: return false
+        return message.senderType == "visitor" &&
+            message.contentType == "text" &&
+            message.content.optString("text").trim() == text
     }
 
     private fun addBubble(text: String, mine: Boolean, createdAt: Long? = null): View {
@@ -894,6 +953,7 @@ class HermesLiveChatActivity : Activity() {
         private val TEXT_MUTED = Color.parseColor("#94A3B8")
 
         private const val maxImageBytes = 10 * 1024 * 1024
+        private const val historyPullThresholdDp = 48
         private val allowedImageMimeTypes = setOf("image/jpeg", "image/png", "image/gif")
         private val timeFormatter = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
 
