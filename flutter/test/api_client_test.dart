@@ -6,9 +6,10 @@ import 'package:hermes_livechat/src/internal/api_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-HermesLiveChatConfig _config() => HermesLiveChatConfig(
+HermesLiveChatConfig _config({String? bizToken}) => HermesLiveChatConfig(
       baseUrl: 'https://chat.example.com',
       appKey: 'app_xxx',
+      bizToken: bizToken,
     );
 
 void main() {
@@ -106,7 +107,9 @@ void main() {
 
   group('ApiClient.sendText', () {
     test('sends visitor token and unwraps the message envelope', () async {
+      late http.Request seen;
       final mock = MockClient((request) async {
+        seen = request;
         return http.Response(
           jsonEncode({
             'conversation': {
@@ -138,10 +141,46 @@ void main() {
         text: 'hello',
         clientMsgId: 'c_abc',
       );
+      final body = jsonDecode(seen.body) as Map<String, Object?>;
+      expect(body.containsKey('biz_token'), isFalse);
       final msg = result.message;
       expect(msg.uuid, 'msg_1');
       expect(msg.contentType, 'text');
       expect(msg.content['text'], 'hello');
+    });
+
+    test('includes configured biz_token when present', () async {
+      late http.Request seen;
+      final mock = MockClient((request) async {
+        seen = request;
+        return http.Response(
+          jsonEncode({
+            'message': {
+              'uuid': 'msg_1',
+              'conversation_id': 'conv_1',
+              'client_msg_id': 'c_abc',
+              'sender_type': 'visitor',
+              'sender_id': 'v_1',
+              'content_type': 'text',
+              'content': {'text': 'hello'},
+              'created_at': 1778668800,
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+
+      final api = ApiClient(_config(bizToken: ' biz-token '), httpClient: mock);
+      await api.sendText(
+        visitorToken: 'visitor_token_value',
+        conversationId: 'conv_1',
+        text: 'hello',
+        clientMsgId: 'c_abc',
+      );
+
+      final body = jsonDecode(seen.body) as Map<String, Object?>;
+      expect(body['biz_token'], 'biz-token');
     });
   });
 

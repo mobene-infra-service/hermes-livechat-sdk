@@ -15,6 +15,7 @@ to manually enter:
 - `realtimeUrl`
 - `appKey`
 - `secretKey`
+- `bizToken`
 
 | Field | Default |
 |---|---|
@@ -22,6 +23,7 @@ to manually enter:
 | `realtimeUrl` | `wss://hermes-test.financifyx.com/api/connection/websocket` |
 | `appKey` | `app_019e6335c04478838ef4f9418263d279` |
 | `secretKey` | `sk_bB3QVOT8KZWex6qSU58Y196MUPHFb1WA8rBGdppA1hg` |
+| `bizToken` | Empty |
 | `customerId` | Random `ios-demo-*` value |
 
 The app configures `HermesLiveChat` and opens the default chat page with
@@ -30,6 +32,7 @@ the initial session or welcome message is fetched. The chat page includes a
 photo button for selecting and sending `content_type=image` messages.
 
 `secretKey` is included only to test `is_auth=1` against the test environment. Do not embed the Secret Key in a production app; production integrations should ask the customer App Backend for a short-lived `identity_token`.
+`bizToken` is optional and only needed when you want to exercise business-tool calls end to end.
 
 ## Command Line Build
 

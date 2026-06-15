@@ -2,6 +2,7 @@ class HermesLiveChatConfig {
   HermesLiveChatConfig({
     required this.baseUrl,
     required this.appKey,
+    String? bizToken,
     String? realtimeUrl,
     this.refreshLeewaySeconds = 60,
     this.backgroundDisconnectDelay = const Duration(seconds: 30),
@@ -9,6 +10,7 @@ class HermesLiveChatConfig {
     this.requestTimeout = const Duration(seconds: 10),
     this.logger,
   })  : realtimeUrl = realtimeUrl ?? _deriveRealtimeUrl(baseUrl),
+        bizToken = _blankToNull(bizToken),
         assert(baseUrl.startsWith('http'), 'baseUrl must be http(s)');
 
   /// e.g. `https://chat.example.com`. Trailing slash is stripped.
@@ -21,6 +23,10 @@ class HermesLiveChatConfig {
   /// Centrifugo WebSocket URL. If omitted, derived from [baseUrl]:
   /// `https://x` → `wss://x/connection/websocket`.
   final String realtimeUrl;
+
+  /// Optional host-app business session token. When present, it is sent as
+  /// `biz_token` on message sends so the backend can authenticate tool calls.
+  final String? bizToken;
 
   /// Refresh the visitor token this many seconds before it expires.
   final int refreshLeewaySeconds;
@@ -42,6 +48,11 @@ class HermesLiveChatConfig {
   String get normalizedBaseUrl => baseUrl.endsWith('/')
       ? baseUrl.substring(0, baseUrl.length - 1)
       : baseUrl;
+}
+
+String? _blankToNull(String? value) {
+  final trimmed = value?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
 }
 
 String _deriveRealtimeUrl(String baseUrl) {

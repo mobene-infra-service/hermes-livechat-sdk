@@ -70,7 +70,8 @@ import HermesLiveChat
 HermesLiveChat.shared.configure(
     HermesLiveChatConfig(
         baseUrl: URL(string: "https://chat.example.com")!,
-        appKey: "019e6335c04478838ef4f9418263d279"
+        appKey: "019e6335c04478838ef4f9418263d279",
+        bizToken: nil
         // realtimeUrl: URL(string: "wss://realtime.example.com/connection/websocket")!
     )
 )
@@ -172,6 +173,8 @@ let imageMessage = try await HermesLiveChat.shared.sendImage(
 ```
 
 首次发送会由服务端创建真实对话，并在同一个响应里返回 `welcome` 和本次用户消息。自定义 UI 若要一次性合并渲染，使用 `sendTextMessages()` / `sendImageMessages()`；`sendText()` / `sendImage()` 仍保持返回本次用户消息。SDK 也会把额外的 `welcome` 通过 `events()` 下发，并用响应消息去重后续 realtime。
+
+如果需要测试业务工具链路，可在 `HermesLiveChatConfig` 里传 `bizToken`。SDK 会把它写入发消息请求的 `biz_token` 字段，服务端再转成工具请求头 `X-Customer-Token`。
 
 拉历史和标记已读：
 

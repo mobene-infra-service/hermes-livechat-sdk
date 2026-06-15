@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var realtimeValue: TextView
     private lateinit var appKeyValue: TextView
     private lateinit var secretValue: TextView
+    private lateinit var bizTokenValue: TextView
     private lateinit var customerIdInput: EditText
     private lateinit var openButton: Button
     private lateinit var customButton: Button
@@ -128,11 +129,13 @@ class MainActivity : ComponentActivity() {
         realtimeValue = valueLabel()
         appKeyValue = valueLabel()
         secretValue = valueLabel()
+        bizTokenValue = valueLabel()
         stack.addView(card(title = "当前配置", children = listOf(
             infoRow("Base URL", baseUrlValue),
             infoRow("Realtime", realtimeValue),
             infoRow("App Key", appKeyValue),
             infoRow("Secret", secretValue),
+            infoRow("Biz Token", bizTokenValue),
         )))
         stack.addView(spacing(16))
 
@@ -178,6 +181,7 @@ class MainActivity : ComponentActivity() {
         realtimeValue.text = if (config.realtimeUrl.isEmpty()) "自动推导" else config.realtimeUrl
         appKeyValue.text = config.appKey
         secretValue.text = maskSecret(config.secretKey)
+        bizTokenValue.text = maskSecret(config.bizToken)
     }
 
     private fun updateLoadingState() {
@@ -199,6 +203,7 @@ class MainActivity : ComponentActivity() {
         val realtimeUrl = currentConfig.realtimeUrl.trim()
         val appKey = currentConfig.appKey.trim()
         val secret = currentConfig.secretKey.trim()
+        val bizToken = currentConfig.bizToken.trim()
         val typed = customerIdInput.text.toString().trim()
         val customerId = typed.ifEmpty { SampleConfig.randomCustomerId() }
         if (typed.isEmpty()) customerIdInput.setText(customerId)
@@ -217,9 +222,9 @@ class MainActivity : ComponentActivity() {
         }
 
         val config = if (realtimeUrl.isEmpty()) {
-            HermesLiveChatConfig(baseUrl = baseUrl, appKey = appKey)
+            HermesLiveChatConfig(baseUrl = baseUrl, appKey = appKey, bizToken = bizToken)
         } else {
-            HermesLiveChatConfig(baseUrl = baseUrl, appKey = appKey, realtimeUrl = realtimeUrl)
+            HermesLiveChatConfig(baseUrl = baseUrl, appKey = appKey, realtimeUrl = realtimeUrl, bizToken = bizToken)
         }
         HermesLiveChat.configure(context = applicationContext, config = config)
 

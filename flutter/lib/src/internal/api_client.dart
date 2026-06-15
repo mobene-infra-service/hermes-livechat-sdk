@@ -77,6 +77,7 @@ class ApiClient {
         'client_msg_id': clientMsgId,
         'content_type': 'text',
         'content': {'text': text},
+        if (_config.bizToken != null) 'biz_token': _config.bizToken,
       },
     );
     return SendMessageResult.fromJson(json);
@@ -99,6 +100,7 @@ class ApiClient {
         'client_msg_id': clientMsgId,
         'content_type': 'image',
         'content': {'key': key, 'url': url, 'mime': mimeType, 'size': size},
+        if (_config.bizToken != null) 'biz_token': _config.bizToken,
       },
     );
     return SendMessageResult.fromJson(json);

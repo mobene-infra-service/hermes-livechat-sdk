@@ -8,6 +8,7 @@ enum SampleConfig {
         let realtimeUrl: String
         let appKey: String
         let secretKey: String
+        let bizToken: String
     }
 
     static let environments: [Environment] = [
@@ -17,7 +18,8 @@ enum SampleConfig {
             baseUrl: "https://hermes-test.financifyx.com/api",
             realtimeUrl: "wss://hermes-test.financifyx.com/api/connection/websocket",
             appKey: "app_019e6335c04478838ef4f9418263d279",
-            secretKey: "sk_bB3QVOT8KZWex6qSU58Y196MUPHFb1WA8rBGdppA1hg"
+            secretKey: "sk_bB3QVOT8KZWex6qSU58Y196MUPHFb1WA8rBGdppA1hg",
+            bizToken: ""
         ),
         Environment(
             name: "生产",
@@ -25,7 +27,8 @@ enum SampleConfig {
             baseUrl: "https://hermesomni.com/api",
             realtimeUrl: "wss://hermesomni.com/api/connection/websocket",
             appKey: "app_019e6335c04478838ef4f9418263d279",
-            secretKey: "sk_bB3QVOT8KZWex6qSU58Y196MUPHFb1WA8rBGdppA1hg"
+            secretKey: "sk_bB3QVOT8KZWex6qSU58Y196MUPHFb1WA8rBGdppA1hg",
+            bizToken: ""
         ),
     ]
 

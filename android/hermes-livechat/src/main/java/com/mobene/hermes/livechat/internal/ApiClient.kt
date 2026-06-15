@@ -60,6 +60,7 @@ internal class ApiClient(private val config: HermesLiveChatConfig) {
             put("client_msg_id", clientMsgId)
             put("content_type", "text")
             put("content", JSONObject(mapOf("text" to text)))
+            putOpt("biz_token", config.bizToken?.trim()?.takeIf { it.isNotEmpty() })
         }
         return SendMessageResult.fromJson(post("/api/livechat/v1/messages", body, token))
     }
@@ -78,6 +79,7 @@ internal class ApiClient(private val config: HermesLiveChatConfig) {
             put("client_msg_id", clientMsgId)
             put("content_type", "image")
             put("content", JSONObject(mapOf("key" to key, "url" to url, "mime" to mimeType, "size" to size)))
+            putOpt("biz_token", config.bizToken?.trim()?.takeIf { it.isNotEmpty() })
         }
         return SendMessageResult.fromJson(post("/api/livechat/v1/messages", body, token))
     }

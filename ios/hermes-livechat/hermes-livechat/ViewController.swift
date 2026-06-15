@@ -9,6 +9,7 @@ final class ViewController: UIViewController {
     private let realtimeUrlLabel = UILabel()
     private let appKeyLabel = UILabel()
     private let secretLabel = UILabel()
+    private let bizTokenLabel = UILabel()
     private let customerIdInput = UITextField()
     private let openButton = UIButton(type: .system)
     private let customButton = UIButton(type: .system)
@@ -71,6 +72,7 @@ final class ViewController: UIViewController {
             infoRow(title: "Realtime", valueLabel: realtimeUrlLabel),
             infoRow(title: "App Key", valueLabel: appKeyLabel),
             infoRow(title: "Secret", valueLabel: secretLabel),
+            infoRow(title: "Biz Token", valueLabel: bizTokenLabel),
         ]))
 
         configureCustomerIdField()
@@ -189,6 +191,7 @@ final class ViewController: UIViewController {
         let realtimeUrl = currentConfig.realtimeUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         let appKey = currentConfig.appKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let secret = currentConfig.secretKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bizToken = currentConfig.bizToken.trimmingCharacters(in: .whitespacesAndNewlines)
         let customerId = customerIdInput.trimmedText.isEmpty
             ? SampleConfig.randomCustomerId()
             : customerIdInput.trimmedText
@@ -217,7 +220,8 @@ final class ViewController: UIViewController {
             HermesLiveChatConfig(
                 baseUrl: base,
                 appKey: appKey,
-                realtimeUrl: realtime
+                realtimeUrl: realtime,
+                bizToken: bizToken
             )
         )
 
@@ -286,6 +290,7 @@ final class ViewController: UIViewController {
         realtimeUrlLabel.text = config.realtimeUrl.isEmpty ? "自动推导" : config.realtimeUrl
         appKeyLabel.text = config.appKey
         secretLabel.text = maskSecret(config.secretKey)
+        bizTokenLabel.text = maskSecret(config.bizToken)
     }
 
     private func updateLoadingState() {
@@ -369,6 +374,7 @@ final class CustomConfigViewController: UIViewController {
     private let realtimeUrlInput = UITextField()
     private let appKeyInput = UITextField()
     private let secretInput = UITextField()
+    private let bizTokenInput = UITextField()
     private let saveButton = UIButton(type: .system)
 
     private let initialConfig: SampleConfig.Environment
@@ -406,11 +412,13 @@ final class CustomConfigViewController: UIViewController {
         configureField(realtimeUrlInput, placeholder: "Realtime URL（可留空自动推导）", value: initialConfig.realtimeUrl, keyboardType: .URL)
         configureField(appKeyInput, placeholder: "App Key", value: initialConfig.appKey)
         configureField(secretInput, placeholder: "Secret Key（可留空）", value: initialConfig.secretKey)
+        configureField(bizTokenInput, placeholder: "Biz Token（可留空）", value: initialConfig.bizToken)
 
         stack.addArrangedSubview(labeledField("Base URL", field: baseUrlInput))
         stack.addArrangedSubview(labeledField("Realtime URL", field: realtimeUrlInput))
         stack.addArrangedSubview(labeledField("App Key", field: appKeyInput))
         stack.addArrangedSubview(labeledField("Secret Key", field: secretInput))
+        stack.addArrangedSubview(labeledField("Biz Token", field: bizTokenInput))
 
         saveButton.setTitle("保存并使用", for: .normal)
         saveButton.setTitleColor(.white, for: .normal)
@@ -468,6 +476,7 @@ final class CustomConfigViewController: UIViewController {
         let realtimeUrl = realtimeUrlInput.trimmedText
         let appKey = appKeyInput.trimmedText
         let secret = secretInput.trimmedText
+        let bizToken = bizTokenInput.trimmedText
 
         guard isValidURL(baseUrl, schemes: ["http", "https"]) else {
             showError("Base URL 需要是有效的 http:// 或 https:// 地址")
@@ -489,7 +498,8 @@ final class CustomConfigViewController: UIViewController {
                 baseUrl: baseUrl,
                 realtimeUrl: realtimeUrl,
                 appKey: appKey,
-                secretKey: secret
+                secretKey: secret,
+                bizToken: bizToken
             )
         )
         navigationController?.popViewController(animated: true)
@@ -534,6 +544,8 @@ extension CustomConfigViewController: UITextFieldDelegate {
             appKeyInput.becomeFirstResponder()
         case appKeyInput:
             secretInput.becomeFirstResponder()
+        case secretInput:
+            bizTokenInput.becomeFirstResponder()
         default:
             textField.resignFirstResponder()
         }

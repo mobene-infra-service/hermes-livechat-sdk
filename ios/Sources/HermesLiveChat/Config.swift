@@ -4,6 +4,7 @@ public struct HermesLiveChatConfig {
     public let baseUrl: URL
     public let appKey: String
     public let realtimeUrl: URL
+    public let bizToken: String?
     public let refreshLeewaySeconds: TimeInterval
     public let realtimeIdleDisconnectDelay: TimeInterval
 
@@ -11,12 +12,14 @@ public struct HermesLiveChatConfig {
         baseUrl: URL,
         appKey: String,
         realtimeUrl: URL? = nil,
+        bizToken: String? = nil,
         refreshLeewaySeconds: TimeInterval = 60,
         realtimeIdleDisconnectDelay: TimeInterval = 5 * 60
     ) {
         self.baseUrl = baseUrl
         self.appKey = appKey
         self.realtimeUrl = realtimeUrl ?? HermesLiveChatConfig.deriveRealtimeUrl(baseUrl)
+        self.bizToken = bizToken?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.refreshLeewaySeconds = refreshLeewaySeconds
         self.realtimeIdleDisconnectDelay = realtimeIdleDisconnectDelay
     }

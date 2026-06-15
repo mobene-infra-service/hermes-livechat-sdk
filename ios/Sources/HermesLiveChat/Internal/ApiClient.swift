@@ -47,6 +47,7 @@ internal final class ApiClient {
             "content": ["text": text],
         ]
         body["conversation_id"] = conversationId
+        body["biz_token"] = config.bizToken
         return SendMessageResult.from(try await post(path: "/api/livechat/v1/messages", body: body.compactMapValues { $0 }, token: token))
     }
 
@@ -57,6 +58,7 @@ internal final class ApiClient {
             "content": ["key": key, "url": url, "mime": mimeType, "size": size],
         ]
         body["conversation_id"] = conversationId
+        body["biz_token"] = config.bizToken
         return SendMessageResult.from(try await post(path: "/api/livechat/v1/messages", body: body.compactMapValues { $0 }, token: token))
     }
 

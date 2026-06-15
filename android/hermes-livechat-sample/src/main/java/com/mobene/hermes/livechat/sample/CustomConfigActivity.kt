@@ -25,6 +25,7 @@ class CustomConfigActivity : ComponentActivity() {
     private lateinit var realtimeUrlInput: EditText
     private lateinit var appKeyInput: EditText
     private lateinit var secretInput: EditText
+    private lateinit var bizTokenInput: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -35,6 +36,7 @@ class CustomConfigActivity : ComponentActivity() {
         intent.getStringExtra(EXTRA_REALTIME_URL)?.let { realtimeUrlInput.setText(it) }
         intent.getStringExtra(EXTRA_APP_KEY)?.let { appKeyInput.setText(it) }
         intent.getStringExtra(EXTRA_SECRET)?.let { secretInput.setText(it) }
+        intent.getStringExtra(EXTRA_BIZ_TOKEN)?.let { bizTokenInput.setText(it) }
     }
 
     private fun buildUi(): View {
@@ -55,6 +57,7 @@ class CustomConfigActivity : ComponentActivity() {
         realtimeUrlInput = field("Realtime URL（可留空自动推导）", InputType.TYPE_TEXT_VARIATION_URI)
         appKeyInput = field("App Key", InputType.TYPE_CLASS_TEXT)
         secretInput = field("Secret Key（可留空）", InputType.TYPE_CLASS_TEXT)
+        bizTokenInput = field("Biz Token（可留空）", InputType.TYPE_CLASS_TEXT)
 
         stack.addView(labeled("Base URL", baseUrlInput))
         stack.addView(spacing(14))
@@ -63,6 +66,8 @@ class CustomConfigActivity : ComponentActivity() {
         stack.addView(labeled("App Key", appKeyInput))
         stack.addView(spacing(14))
         stack.addView(labeled("Secret Key", secretInput))
+        stack.addView(spacing(14))
+        stack.addView(labeled("Biz Token", bizTokenInput))
         stack.addView(spacing(24))
 
         val saveButton = Button(this).apply {
@@ -111,6 +116,7 @@ class CustomConfigActivity : ComponentActivity() {
         val realtimeUrl = realtimeUrlInput.text.toString().trim()
         val appKey = appKeyInput.text.toString().trim()
         val secret = secretInput.text.toString().trim()
+        val bizToken = bizTokenInput.text.toString().trim()
 
         if (!baseUrl.startsWith("http")) {
             error("Base URL 需要是有效的 http:// 或 https:// 地址")
@@ -132,6 +138,7 @@ class CustomConfigActivity : ComponentActivity() {
             putExtra(EXTRA_REALTIME_URL, realtimeUrl)
             putExtra(EXTRA_APP_KEY, appKey)
             putExtra(EXTRA_SECRET, secret)
+            putExtra(EXTRA_BIZ_TOKEN, bizToken)
         }
         setResult(RESULT_OK, data)
         finish()
@@ -158,6 +165,7 @@ class CustomConfigActivity : ComponentActivity() {
         private const val EXTRA_REALTIME_URL = "realtimeUrl"
         private const val EXTRA_APP_KEY = "appKey"
         private const val EXTRA_SECRET = "secret"
+        private const val EXTRA_BIZ_TOKEN = "bizToken"
 
         fun intent(context: Context, prefill: SampleConfig.Environment): Intent =
             Intent(context, CustomConfigActivity::class.java).apply {
@@ -165,6 +173,7 @@ class CustomConfigActivity : ComponentActivity() {
                 putExtra(EXTRA_REALTIME_URL, prefill.realtimeUrl)
                 putExtra(EXTRA_APP_KEY, prefill.appKey)
                 putExtra(EXTRA_SECRET, prefill.secretKey)
+                putExtra(EXTRA_BIZ_TOKEN, prefill.bizToken)
             }
 
         fun extractResult(data: Intent): SampleConfig.Environment? {
@@ -176,6 +185,7 @@ class CustomConfigActivity : ComponentActivity() {
                 realtimeUrl = data.getStringExtra(EXTRA_REALTIME_URL).orEmpty(),
                 appKey = data.getStringExtra(EXTRA_APP_KEY).orEmpty(),
                 secretKey = data.getStringExtra(EXTRA_SECRET).orEmpty(),
+                bizToken = data.getStringExtra(EXTRA_BIZ_TOKEN).orEmpty(),
             )
         }
     }

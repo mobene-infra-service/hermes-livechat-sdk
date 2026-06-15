@@ -10,6 +10,8 @@ Hermes LiveChat SDK 用于在客户 App 内接入在线客服。当前仓库提�
 
 三端协议一致：App 用公开 `app_key` 初始化，打开聊天入口时只拉欢迎语，用户首次发送消息前才调用 `/init` 获取 visitor token；后续 REST 和 Centrifugo realtime 都使用 visitor token。
 
+业务会话 token 另算：客户端可选传 `bizToken`，App SDK 把它放进发消息请求体 `biz_token`；arke 再把它转成业务工具请求头 `X-Customer-Token`。不需要业务工具时可以不传。
+
 ## 接入前准备
 
 后台或运营需要先提供：

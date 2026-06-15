@@ -7,6 +7,7 @@ data class HermesLiveChatConfig(
     val refreshLeewaySeconds: Long = 60,
     val requestTimeoutMillis: Long = 10_000,
     val realtimeIdleDisconnectMillis: Long = 5 * 60 * 1000L,
+    val bizToken: String? = null,
 )
 
 private fun deriveRealtimeUrl(baseUrl: String): String {

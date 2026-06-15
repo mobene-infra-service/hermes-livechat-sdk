@@ -28,4 +28,8 @@ internal extension String {
     var urlEncoded: String {
         addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? self
     }
+
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
 }
