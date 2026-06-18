@@ -46,6 +46,11 @@ internal final class RealtimeClient: CentrifugeClientDelegate {
     }
 
     func onError(_ client: CentrifugeClient, _ event: CentrifugeErrorEvent) {
-        emit(.error(HermesLiveChatException(error: .unknown, code: nil, message: "\(event.error)", status: nil)))
+        emit(.error(HermesLiveChatException(
+            error: .network,
+            code: "LC_REALTIME_TRANSPORT_ERROR",
+            message: nil,
+            status: nil
+        )))
     }
 }

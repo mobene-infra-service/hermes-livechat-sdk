@@ -37,6 +37,7 @@ public final class HermesLiveChatViewController: UIViewController {
     private var keyboardObservers: [NSObjectProtocol] = []
     private var messageKeys = Set<String>()
     private var readMarkedMessageIds = Set<String>()
+    private var shownEventErrorMessages = Set<String>()
     private var started = false
     private var eventsTask: Task<Void, Never>?
     private var welcomePlaceholder: UIView?
@@ -258,7 +259,9 @@ public final class HermesLiveChatViewController: UIViewController {
                     case .conversationUpdated(let conversation):
                         if conversation.status == "closed" { started = false }
                     case .error(let error):
-                        addSystem(error.message ?? "\(error.error)")
+                        if let message = Self.userVisibleErrorMessage(error) {
+                            addSystemOnce(message)
+                        }
                     default:
                         break
                     }
@@ -424,6 +427,26 @@ public final class HermesLiveChatViewController: UIViewController {
 
     private func addSystem(_ text: String) {
         addBubble(text, mine: false, createdAt: nil)
+    }
+
+    private func addSystemOnce(_ text: String) {
+        guard shownEventErrorMessages.insert(text).inserted else { return }
+        addSystem(text)
+    }
+
+    private static func userVisibleErrorMessage(_ error: HermesLiveChatException) -> String? {
+        switch error.error {
+        case .network:
+            return nil
+        case .realtimeProviderUnavailable:
+            return "连接暂时异常，请稍后再试。"
+        case .realtimeConnectUnauthorized, .tokenInvalid, .tokenExpired:
+            return "会话已过期，请重新进入客服。"
+        case .notConfigured:
+            return "客服暂不可用，请稍后再试。"
+        default:
+            return nil
+        }
     }
 
     private func showWelcomePlaceholder(_ text: String) {
