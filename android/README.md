@@ -38,7 +38,7 @@ SDK 在 Android API 23+ 内处理默认 UI、WebSocket 生命周期和 session �
 - `receive_mode = bot_only`
 - `bot_code` 指向可用 LiveChat 接待机器人
 
-如果渠道存在但没有接待方案，SDK 会收到“接待方案不存在”。
+如果渠道存在但没有接待方案，SDK 会收到“抱歉,在线客服暂时无法为您服务,请您稍后再试。”。
 
 ## 安装
 
@@ -208,7 +208,7 @@ if (conversationId != null) {
 | 表现 | 常见原因 |
 |---|---|
 | 渠道不存在 | `appKey` 写错或环境不一致 |
-| 接待方案不存在 | App 渠道未绑定启用的接待方案 |
+| 抱歉,在线客服暂时无法为您服务,请您稍后再试。 | App 渠道未绑定启用的接待方案 |
 | `channelDisabled` | App 渠道被禁用 |
 | `orgDisabled` | 机构未开通 LiveChat |
 | 收不到实时消息 | WebSocket 地址不可达、Centrifugo 未配置、设备网络拦截 |
