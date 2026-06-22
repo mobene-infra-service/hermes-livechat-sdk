@@ -102,7 +102,7 @@ HermesLiveChatLauncher.present(
 - 文本发送
 - 图片选择、上传和图片消息展示
 - 实时消息和会话关闭事件
-- 错误提示
+- 页面级错误提示；SDK / 网络 / 初始化失败不会写入聊天消息流
 - 关闭聊天页后不立即断开 WebSocket，默认 5 分钟 idle 后断开
 
 如需非图片附件或完全自定义 UI，使用下面的 headless API。
@@ -208,6 +208,8 @@ if let conversationId = HermesLiveChat.shared.currentConversationId {
 
 如果启用「Secret 验证」，客户 App Backend 必须签发短期 HS256 `identity_token`，iOS App 再通过 `VisitorIdentity(identityToken: ...)` 传给 SDK。
 
+当 `/init` 返回 `APP_INIT_TOKEN_INVALID` 或 `APP_INIT_TOKEN_EXPIRED` 时，SDK 会清空当前 `appKey` 下的本地 visitor session、断开 realtime，并通过 `HermesLiveChatEvent.error` 抛出错误。默认聊天页会把 SDK / 网络 / 初始化失败展示为页面级错误提示，不写入聊天消息流；身份 token 无效或过期时还会进入不可发送状态，不再继续展示欢迎语伪装成已连通会话。宿主 App 应重新向客户 App Backend 获取新的 `identity_token` 后再打开聊天页或重试 `startSession()`。
+
 ## 生命周期
 
 - visitor session 按 `appKey` 存在 iOS Keychain。
@@ -225,6 +227,7 @@ if let conversationId = HermesLiveChat.shared.currentConversationId {
 | 抱歉,在线客服暂时无法为您服务,请您稍后再试。 | App 渠道未绑定启用的接待方案 |
 | `channelDisabled` | App 渠道被禁用 |
 | `orgDisabled` | 机构未开通 LiveChat |
+| `appInitTokenInvalid` / `appInitTokenExpired` | App 渠道开启了「Secret 验证」，但 `identityToken` 缺失、签名 secret 不匹配、`app_key/aud/exp` 不合法或已过期 |
 | 收不到实时消息 | WebSocket 地址不可达、Centrifugo 未配置、设备网络拦截 |
 | 测试环境 HTTP 请求失败 | 未配置 ATS |
 

@@ -15,7 +15,11 @@ import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.TextWatcher
+import android.text.style.StyleSpan
+import android.text.style.TypefaceSpan
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -32,6 +36,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.mobene.hermes.livechat.Conversation
 import com.mobene.hermes.livechat.HermesLiveChat
+import com.mobene.hermes.livechat.HermesLiveChatError
+import com.mobene.hermes.livechat.HermesLiveChatException
 import com.mobene.hermes.livechat.HermesLiveChatEvent
 import com.mobene.hermes.livechat.LiveChatConnectionState
 import com.mobene.hermes.livechat.Message
@@ -59,6 +65,7 @@ class HermesLiveChatActivity : Activity() {
     private lateinit var scroll: ScrollView
     private lateinit var input: EditText
     private lateinit var status: TextView
+    private lateinit var errorBanner: TextView
     private lateinit var composer: LinearLayout
     private lateinit var attachButton: ImageButton
     private lateinit var sendButton: Button
@@ -69,6 +76,7 @@ class HermesLiveChatActivity : Activity() {
     private var loading = false
     private var sending = false
     private var uploadingImage = false
+    private var sessionBlocked = false
     private var eventsJob: Job? = null
     private val messageKeys = mutableSetOf<String>()
     private val readMarkedMessageIds = mutableSetOf<String>()
@@ -137,6 +145,7 @@ class HermesLiveChatActivity : Activity() {
             setBackgroundColor(SCREEN_BACKGROUND)
         }
         root.addView(buildHeader(), LinearLayout.LayoutParams.MATCH_PARENT, dp(56))
+        root.addView(buildErrorBanner(), LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         root.addView(buildScrollContainer(), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(buildComposer(), LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         setContentView(root)
@@ -352,6 +361,16 @@ class HermesLiveChatActivity : Activity() {
         }
     }
 
+    private fun buildErrorBanner(): TextView =
+        TextView(this).apply {
+            visibility = View.GONE
+            textSize = 13f
+            setTextColor(ERROR_TEXT)
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setBackgroundColor(ERROR_BACKGROUND)
+            maxLines = 3
+        }
+
     private fun applyInsets(root: LinearLayout) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
 
@@ -386,7 +405,7 @@ class HermesLiveChatActivity : Activity() {
                         if (event.conversation.status == "closed") started = false
                     }
                     is HermesLiveChatEvent.MessageRead -> Unit
-                    is HermesLiveChatEvent.Error -> addSystemMessage(event.error.message ?: event.error.error.name)
+                    is HermesLiveChatEvent.Error -> handleSessionError(event.error)
                 }
             }
         }
@@ -407,9 +426,10 @@ class HermesLiveChatActivity : Activity() {
         runCatching {
             HermesLiveChat.prefetchWelcome(intent.getStringExtra(EXTRA_LOCALE))
         }.onSuccess {
+            clearErrorBanner()
             if (it.isNotBlank()) showWelcomePlaceholder(it)
         }.onFailure {
-            addSystemMessage(it.message ?: "加载欢迎语失败")
+            showErrorBanner(it.message ?: "加载欢迎语失败")
         }
     }
 
@@ -421,9 +441,9 @@ class HermesLiveChatActivity : Activity() {
                 runCatching {
                     startSessionAndLoadHistory()
                 }.onFailure {
-                    addSystemMessage(it.message ?: "初始化会话失败")
+                    handleSessionError(it)
                 }
-                if (!started) loadWelcomeOnce()
+                if (!started && !sessionBlocked) loadWelcomeOnce()
             } finally {
                 setLoading(null)
             }
@@ -436,14 +456,14 @@ class HermesLiveChatActivity : Activity() {
             runCatching {
                 startSessionAndLoadHistory()
             }.onFailure {
-                addSystemMessage(it.message ?: "初始化会话失败")
+                handleSessionError(it)
             }
         }
     }
 
     private fun sendText() {
         val text = input.text.toString().trim()
-        if (text.isEmpty() || sending || uploadingImage) return
+        if (text.isEmpty() || sending || uploadingImage || sessionBlocked) return
         input.setText("")
         setSending(true)
         showPendingBubble(text)
@@ -454,12 +474,13 @@ class HermesLiveChatActivity : Activity() {
                 }
                 HermesLiveChat.sendTextMessages(text)
             }.onSuccess {
+                clearErrorBanner()
                 removePendingBubble()
                 it.forEach(::addMessage)
             }.onFailure {
                 removePendingBubble()
                 input.setText(text)
-                addSystemMessage(it.message ?: "发送失败")
+                handleSessionError(it, fallback = "发送失败")
             }.also {
                 setSending(false)
             }
@@ -467,7 +488,7 @@ class HermesLiveChatActivity : Activity() {
     }
 
     private fun sendImage(uri: Uri) {
-        if (sending || uploadingImage) return
+        if (sending || uploadingImage || sessionBlocked) return
         setUploadingImage(true)
         scope.launch {
             runCatching {
@@ -480,8 +501,11 @@ class HermesLiveChatActivity : Activity() {
                     mimeType = attachment.mimeType,
                     filename = attachment.filename,
                 )
-            }.onSuccess { it.forEach(::addMessage) }.onFailure {
-                addSystemMessage(it.message ?: "图片发送失败")
+            }.onSuccess {
+                clearErrorBanner()
+                it.forEach(::addMessage)
+            }.onFailure {
+                handleSessionError(it, fallback = "图片发送失败")
             }.also {
                 setUploadingImage(false)
             }
@@ -493,7 +517,7 @@ class HermesLiveChatActivity : Activity() {
         if (text.isNullOrBlank()) {
             loadingOverlay.visibility = View.GONE
             loadingDots.stopAnimating()
-            input.isEnabled = !sending && !uploadingImage
+            input.isEnabled = !sending && !uploadingImage && !sessionBlocked
             updateSendButtonState()
             return
         }
@@ -506,26 +530,28 @@ class HermesLiveChatActivity : Activity() {
 
     private fun setSending(value: Boolean) {
         sending = value
-        input.isEnabled = !value && !loading && !uploadingImage
+        input.isEnabled = !value && !loading && !uploadingImage && !sessionBlocked
         updateSendButtonState()
     }
 
     private fun setUploadingImage(value: Boolean) {
         uploadingImage = value
-        input.isEnabled = !value && !loading && !sending
+        input.isEnabled = !value && !loading && !sending && !sessionBlocked
         updateSendButtonState()
     }
 
     private fun updateSendButtonState() {
         if (!::sendButton.isInitialized) return
         val hasText = input.text.toString().trim().isNotEmpty()
-        val busy = loading || sending || uploadingImage
+        val busy = loading || sending || uploadingImage || sessionBlocked
         if (::attachButton.isInitialized) {
             attachButton.isEnabled = !busy
             attachButton.alpha = if (busy) 0.5f else 1f
         }
         sendButton.isEnabled = !busy && hasText
-        sendButton.text = if (loading) {
+        sendButton.text = if (sessionBlocked) {
+            "不可用"
+        } else if (loading) {
             "加载中"
         } else if (uploadingImage) {
             "上传中"
@@ -543,9 +569,37 @@ class HermesLiveChatActivity : Activity() {
         }
     }
 
+    private fun handleSessionError(error: Throwable, fallback: String = "初始化会话失败") {
+        val livechatError = error as? HermesLiveChatException
+        if (livechatError?.error == HermesLiveChatError.APP_INIT_TOKEN_INVALID ||
+            livechatError?.error == HermesLiveChatError.APP_INIT_TOKEN_EXPIRED
+        ) {
+            blockSession(livechatError.message ?: "App 身份 token 无效，请刷新身份后重试")
+            return
+        }
+        if (sessionBlocked) return
+        showErrorBanner(error.message ?: fallback)
+    }
+
+    private fun blockSession(message: String) {
+        if (!sessionBlocked) {
+            sessionBlocked = true
+            removePendingBubble()
+            removeWelcomePlaceholder()
+            showErrorBanner(message)
+        }
+        started = false
+        input.isEnabled = false
+        if (::attachButton.isInitialized) {
+            attachButton.isEnabled = false
+        }
+        updateSendButtonState()
+    }
+
     private suspend fun startSessionAndLoadHistory() {
         HermesLiveChat.startSession(identity)
         started = true
+        clearErrorBanner()
         val activeId = HermesLiveChat.currentConversationId
         // Closed conversations are not loaded eagerly: record their ids so the
         // toggle bar knows there is earlier history to pull in on demand.
@@ -626,10 +680,11 @@ class HermesLiveChatActivity : Activity() {
                 }
                 loaded
             }.onSuccess { loaded ->
+                clearErrorBanner()
                 historyExpanded = true
                 prependHistory(loaded)
             }.onFailure {
-                addSystemMessage(it.message ?: "加载更早消息失败")
+                handleSessionError(it, fallback = "加载更早消息失败")
             }.also {
                 historyLoading = false
                 refreshHistoryToggle()
@@ -694,8 +749,17 @@ class HermesLiveChatActivity : Activity() {
         }
     }
 
-    private fun addSystemMessage(text: String) {
-        addBubble(text, mine = false)
+    private fun showErrorBanner(text: String) {
+        if (!::errorBanner.isInitialized) return
+        val message = text.trim().ifEmpty { "操作失败，请稍后重试" }
+        errorBanner.text = message
+        errorBanner.visibility = View.VISIBLE
+    }
+
+    private fun clearErrorBanner() {
+        if (!::errorBanner.isInitialized || sessionBlocked) return
+        errorBanner.text = ""
+        errorBanner.visibility = View.GONE
     }
 
     private fun showWelcomePlaceholder(text: String) {
@@ -859,7 +923,7 @@ class HermesLiveChatActivity : Activity() {
     }
 
     private fun bubbleLabel(text: String, mine: Boolean) = TextView(this).apply {
-        this.text = text
+        this.text = if (mine) text else inlineMarkdown(text)
         textSize = 15f
         setTextColor(if (mine) Color.WHITE else TEXT_PRIMARY)
         setLineSpacing(dp(2).toFloat(), 1.0f)
@@ -871,6 +935,78 @@ class HermesLiveChatActivity : Activity() {
             strokeWidth = if (mine) 0 else dp(1),
             radius = dp(16).toFloat(),
         )
+    }
+
+    private fun inlineMarkdown(text: String): CharSequence {
+        val result = SpannableStringBuilder()
+        var index = 0
+        while (index < text.length) {
+            val boldMarker = when {
+                text.startsWith("**", index) -> "**"
+                text.startsWith("__", index) -> "__"
+                else -> null
+            }
+            if (boldMarker != null) {
+                val close = text.indexOf(boldMarker, startIndex = index + boldMarker.length)
+                if (close > index + boldMarker.length) {
+                    result.appendMarkdownSpan(
+                        text.substring(index + boldMarker.length, close),
+                        StyleSpan(Typeface.BOLD),
+                    )
+                    index = close + boldMarker.length
+                    continue
+                }
+            }
+
+            if (text[index] == '`') {
+                val close = text.indexOf('`', startIndex = index + 1)
+                if (close > index + 1) {
+                    result.appendMarkdownSpan(
+                        text.substring(index + 1, close),
+                        TypefaceSpan("monospace"),
+                    )
+                    index = close + 1
+                    continue
+                }
+            }
+
+            val italicMarker = when (text[index]) {
+                '*' -> "*"
+                '_' -> "_"
+                else -> null
+            }
+            if (italicMarker != null) {
+                val close = text.indexOf(italicMarker, startIndex = index + 1)
+                if (close > index + 1) {
+                    result.appendMarkdownSpan(
+                        text.substring(index + 1, close),
+                        StyleSpan(Typeface.ITALIC),
+                    )
+                    index = close + 1
+                    continue
+                }
+            }
+
+            val next = text.indexOfFirst(index + 1) { it == '*' || it == '_' || it == '`' }
+                .takeIf { it >= 0 }
+                ?: text.length
+            result.append(text.substring(index, next))
+            index = next
+        }
+        return result
+    }
+
+    private fun SpannableStringBuilder.appendMarkdownSpan(text: String, span: Any) {
+        val start = length
+        append(text)
+        setSpan(span, start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+
+    private inline fun String.indexOfFirst(startIndex: Int, predicate: (Char) -> Boolean): Int {
+        for (i in startIndex until length) {
+            if (predicate(this[i])) return i
+        }
+        return -1
     }
 
     private fun bubbleTimestamp(createdAt: Long) = TextView(this).apply {
@@ -951,6 +1087,8 @@ class HermesLiveChatActivity : Activity() {
         private val SURFACE_MUTED = Color.parseColor("#F1F5F9")
         private val BORDER = Color.parseColor("#E2E8F0")
         private val PRIMARY = Color.parseColor("#2563EB")
+        private val ERROR_BACKGROUND = Color.parseColor("#FEF2F2")
+        private val ERROR_TEXT = Color.parseColor("#B91C1C")
         private val TEXT_PRIMARY = Color.parseColor("#111827")
         private val TEXT_SECONDARY = Color.parseColor("#475569")
         private val TEXT_MUTED = Color.parseColor("#94A3B8")

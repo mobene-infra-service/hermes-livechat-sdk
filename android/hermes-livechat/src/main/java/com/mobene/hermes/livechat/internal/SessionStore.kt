@@ -64,6 +64,13 @@ internal class SessionStore(context: Context, baseUrl: String) {
         saveEncrypted(session)
     }
 
+    fun clear(appKey: String) {
+        prefs.edit()
+            .remove(encryptedKey(appKey))
+            .remove(legacyKey(appKey))
+            .apply()
+    }
+
     private fun saveEncrypted(session: StoredSession): Boolean = runCatching {
         val json = JSONObject().apply {
             put("visitor_id", session.visitorId)

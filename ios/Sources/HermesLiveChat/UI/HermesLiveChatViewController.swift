@@ -27,6 +27,7 @@ public final class HermesLiveChatViewController: UIViewController {
     private let scroll = UIScrollView()
     private let stack = UIStackView()
     private let input = UITextField()
+    private let errorBanner = UILabel()
     private let composer = UIStackView()
     private let attachButton = UIButton(type: .system)
     private let sendButton = UIButton(type: .system)
@@ -39,6 +40,9 @@ public final class HermesLiveChatViewController: UIViewController {
     private var readMarkedMessageIds = Set<String>()
     private var shownEventErrorMessages = Set<String>()
     private var started = false
+    private var sessionBlocked = false {
+        didSet { updateComposerState() }
+    }
     private var eventsTask: Task<Void, Never>?
     private var welcomePlaceholder: UIView?
     private var hasPersistedWelcome = false
@@ -106,6 +110,7 @@ public final class HermesLiveChatViewController: UIViewController {
 
     private func buildUI() {
         configureScroll()
+        configureErrorBanner()
         configureComposer()
         configureLoading()
         installLayoutConstraints()
@@ -150,6 +155,19 @@ public final class HermesLiveChatViewController: UIViewController {
         view.addSubview(composer)
     }
 
+    private func configureErrorBanner() {
+        errorBanner.isHidden = true
+        errorBanner.numberOfLines = 0
+        errorBanner.font = .preferredFont(forTextStyle: .footnote)
+        errorBanner.adjustsFontForContentSizeCategory = true
+        errorBanner.textColor = .systemRed
+        errorBanner.backgroundColor = UIColor.systemRed.withAlphaComponent(0.12)
+        errorBanner.layer.cornerRadius = 8
+        errorBanner.layer.masksToBounds = true
+        errorBanner.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(errorBanner)
+    }
+
     private func configureLoading() {
         loadingLabel.text = "正在加载..."
         loadingLabel.font = .preferredFont(forTextStyle: .subheadline)
@@ -178,7 +196,10 @@ public final class HermesLiveChatViewController: UIViewController {
         let bottom = composer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8)
         composerBottomConstraint = bottom
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            errorBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            errorBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            errorBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            scroll.topAnchor.constraint(equalTo: errorBanner.bottomAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: composer.topAnchor),
@@ -200,9 +221,9 @@ public final class HermesLiveChatViewController: UIViewController {
     private func loadInitialState() async {
         await MainActor.run { setLoading("正在加载会话...") }
         if startSessionOnOpen {
-            await ensureSession()
+            _ = await ensureSession()
         }
-        if !startSessionOnOpen || !started {
+        if (!startSessionOnOpen || !started) && !sessionBlocked {
             await loadWelcome()
         }
         await MainActor.run { setLoading(nil) }
@@ -260,7 +281,7 @@ public final class HermesLiveChatViewController: UIViewController {
                         if conversation.status == "closed" { started = false }
                     case .error(let error):
                         if let message = Self.userVisibleErrorMessage(error) {
-                            addSystemOnce(message)
+                            showErrorOnce(message)
                         }
                     default:
                         break
@@ -273,17 +294,25 @@ public final class HermesLiveChatViewController: UIViewController {
     private func loadWelcome() async {
         do {
             let welcome = try await HermesLiveChat.shared.prefetchWelcome(locale: locale)
-            if !welcome.isEmpty { await MainActor.run { showWelcomePlaceholder(welcome) } }
+            if !welcome.isEmpty {
+                await MainActor.run {
+                    clearErrorBanner()
+                    showWelcomePlaceholder(welcome)
+                }
+            }
         } catch {
-            await MainActor.run { addSystem("加载欢迎语失败") }
+            await MainActor.run { showError("加载欢迎语失败") }
         }
     }
 
-    private func ensureSession() async {
-        guard !started else { return }
+    private func ensureSession() async -> Bool {
+        guard !started else { return true }
         do {
             try await HermesLiveChat.shared.startSession(identity)
             started = true
+            await MainActor.run {
+                sessionBlocked = false
+            }
             let activeId = HermesLiveChat.shared.currentConversationId
             // Closed conversations are not loaded eagerly: record their ids so
             // the toggle bar knows there is earlier history to pull in on demand.
@@ -301,11 +330,14 @@ public final class HermesLiveChatViewController: UIViewController {
                 await loadWelcome()
             }
             await MainActor.run {
+                clearErrorBanner()
                 historyConversationIds = closedIds
                 refreshHistoryToggle()
             }
+            return true
         } catch {
-            await MainActor.run { addSystem("初始化会话失败") }
+            await MainActor.run { handleError(error, fallback: "初始化会话失败") }
+            return false
         }
     }
 
@@ -325,7 +357,7 @@ public final class HermesLiveChatViewController: UIViewController {
     }
 
     @objc private func sendTapped() {
-        guard !isSending && !isUploadingImage else { return }
+        guard !isSending && !isUploadingImage && !sessionBlocked else { return }
         let text = input.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { return }
         input.text = ""
@@ -337,10 +369,17 @@ public final class HermesLiveChatViewController: UIViewController {
                     self.isSending = false
                 }
             }
-            await ensureSession()
+            guard await ensureSession() else {
+                await MainActor.run {
+                    removePendingBubble()
+                    input.text = text
+                }
+                return
+            }
             do {
                 let messages = try await HermesLiveChat.shared.sendTextMessages(text)
                 await MainActor.run {
+                    clearErrorBanner()
                     removePendingBubble()
                     messages.forEach(addMessage)
                 }
@@ -348,14 +387,14 @@ public final class HermesLiveChatViewController: UIViewController {
                 await MainActor.run {
                     removePendingBubble()
                     input.text = text
-                    addSystem("发送失败")
+                    handleError(error, fallback: "发送失败")
                 }
             }
         }
     }
 
     @objc private func attachTapped() {
-        guard !isSending && !isUploadingImage else { return }
+        guard !isSending && !isUploadingImage && !sessionBlocked else { return }
         let picker = UIImagePickerController()
         picker.sourceType = .photoLibrary
         picker.mediaTypes = ["public.image"]
@@ -364,13 +403,13 @@ public final class HermesLiveChatViewController: UIViewController {
     }
 
     private func sendImage(_ image: UIImage) {
-        guard !isUploadingImage else { return }
+        guard !isUploadingImage && !sessionBlocked else { return }
         guard let data = image.jpegData(compressionQuality: 0.88) else {
-            addSystem("读取图片失败")
+            showError("读取图片失败")
             return
         }
         guard data.count > 0, data.count <= Self.maxImageBytes else {
-            addSystem("图片不能超过 10MB")
+            showError("图片不能超过 10MB")
             return
         }
         isUploadingImage = true
@@ -380,16 +419,19 @@ public final class HermesLiveChatViewController: UIViewController {
                     self.isUploadingImage = false
                 }
             }
-            await ensureSession()
+            guard await ensureSession() else { return }
             do {
                 let messages = try await HermesLiveChat.shared.sendImageMessages(
                     data: data,
                     mimeType: "image/jpeg",
                     filename: "image_\(Int(Date().timeIntervalSince1970)).jpg"
                 )
-                await MainActor.run { messages.forEach(addMessage) }
+                await MainActor.run {
+                    clearErrorBanner()
+                    messages.forEach(addMessage)
+                }
             } catch {
-                await MainActor.run { addSystem("图片发送失败") }
+                await MainActor.run { handleError(error, fallback: "图片发送失败") }
             }
         }
     }
@@ -410,11 +452,11 @@ public final class HermesLiveChatViewController: UIViewController {
 
     private func updateComposerState() {
         let hasText = !(input.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let busy = isLoadingInitialState || isSending || isUploadingImage
+        let busy = isLoadingInitialState || isSending || isUploadingImage || sessionBlocked
         input.isEnabled = !busy
         attachButton.isEnabled = !busy
         sendButton.isEnabled = !busy && hasText
-        sendButton.setTitle(isLoadingInitialState ? "加载中" : isUploadingImage ? "上传中" : isSending ? "发送中" : "发送", for: .normal)
+        sendButton.setTitle(sessionBlocked ? "不可用" : isLoadingInitialState ? "加载中" : isUploadingImage ? "上传中" : isSending ? "发送中" : "发送", for: .normal)
     }
 
     @objc private func inputChanged() {
@@ -425,13 +467,43 @@ public final class HermesLiveChatViewController: UIViewController {
         view.endEditing(true)
     }
 
-    private func addSystem(_ text: String) {
-        addBubble(text, mine: false, createdAt: nil)
+    @MainActor
+    private func handleError(_ error: Error, fallback: String) {
+        if let livechatError = error as? HermesLiveChatException,
+           livechatError.error == .appInitTokenInvalid || livechatError.error == .appInitTokenExpired {
+            guard !sessionBlocked else { return }
+            blockSession(livechatError.message ?? "App 身份 token 无效，请刷新身份后重试")
+            return
+        }
+        guard !sessionBlocked else { return }
+        showError((error as? HermesLiveChatException)?.message ?? fallback)
     }
 
-    private func addSystemOnce(_ text: String) {
+    private func showError(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        errorBanner.text = "  \(trimmed.isEmpty ? "操作失败，请稍后重试" : trimmed)  "
+        errorBanner.isHidden = false
+    }
+
+    private func clearErrorBanner() {
+        guard !sessionBlocked else { return }
+        errorBanner.text = nil
+        errorBanner.isHidden = true
+    }
+
+    private func showErrorOnce(_ text: String) {
         guard shownEventErrorMessages.insert(text).inserted else { return }
-        addSystem(text)
+        showError(text)
+    }
+
+    private func blockSession(_ message: String) {
+        if !sessionBlocked {
+            sessionBlocked = true
+            removePendingBubble()
+            removeWelcomePlaceholder()
+            showError(message)
+        }
+        started = false
     }
 
     private static func userVisibleErrorMessage(_ error: HermesLiveChatException) -> String? {
@@ -538,11 +610,12 @@ public final class HermesLiveChatViewController: UIViewController {
                 loaded += try await HermesLiveChat.shared.conversationMessages(conversationId: conversationId)
             }
             await MainActor.run {
+                clearErrorBanner()
                 historyExpanded = true
                 prependHistory(loaded)
             }
         } catch {
-            await MainActor.run { addSystem("加载更早消息失败") }
+            await MainActor.run { handleError(error, fallback: "加载更早消息失败") }
         }
         historyLoading = false
         await MainActor.run { refreshHistoryToggle() }
@@ -643,13 +716,22 @@ public final class HermesLiveChatViewController: UIViewController {
 
     private func makeBubbleView(text: String, mine: Bool) -> UIView {
         let label = UILabel()
-        label.text = text
         label.numberOfLines = 0
         label.textAlignment = .natural
         label.font = .preferredFont(forTextStyle: .body)
         label.adjustsFontForContentSizeCategory = true
         label.lineBreakMode = .byWordWrapping
         label.textColor = mine ? .white : .label
+        label.attributedText = mine
+            ? NSAttributedString(
+                string: text,
+                attributes: [.font: label.font as Any, .foregroundColor: label.textColor as Any]
+            )
+            : Self.inlineMarkdown(
+                text,
+                font: label.font,
+                color: label.textColor
+            )
         label.setContentHuggingPriority(.required, for: .vertical)
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
@@ -717,6 +799,70 @@ public final class HermesLiveChatViewController: UIViewController {
         guard imageSize.width > 0, imageSize.height > 0 else { return 170 }
         let aspectHeight = imageBubbleWidth * imageSize.height / imageSize.width
         return min(max(aspectHeight, 96), imageBubbleMaxHeight)
+    }
+
+    private static func inlineMarkdown(_ text: String, font: UIFont, color: UIColor) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        var index = text.startIndex
+        while index < text.endIndex {
+            if let marker = markdownMarker(in: text, at: index, candidates: ["**", "__"]),
+               let close = text.range(of: marker, range: text.index(index, offsetBy: marker.count)..<text.endIndex),
+               close.lowerBound > text.index(index, offsetBy: marker.count) {
+                result.appendMarkdownSpan(
+                    String(text[text.index(index, offsetBy: marker.count)..<close.lowerBound]),
+                    font: font.bold(),
+                    color: color
+                )
+                index = close.upperBound
+                continue
+            }
+
+            if text[index] == "`",
+               let close = text[index...].dropFirst().firstIndex(of: "`"),
+               close > text.index(after: index) {
+                result.appendMarkdownSpan(
+                    String(text[text.index(after: index)..<close]),
+                    font: UIFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular),
+                    color: color
+                )
+                index = text.index(after: close)
+                continue
+            }
+
+            if let marker = markdownMarker(in: text, at: index, candidates: ["*", "_"]),
+               let close = text.range(of: marker, range: text.index(after: index)..<text.endIndex),
+               close.lowerBound > text.index(after: index) {
+                result.appendMarkdownSpan(
+                    String(text[text.index(after: index)..<close.lowerBound]),
+                    font: font.italic(),
+                    color: color
+                )
+                index = close.upperBound
+                continue
+            }
+
+            let next = nextMarkdownMarker(in: text, after: index)
+            result.appendMarkdownSpan(String(text[index..<next]), font: font, color: color)
+            index = next
+        }
+        return result
+    }
+
+    private static func markdownMarker(in text: String, at index: String.Index, candidates: [String]) -> String? {
+        candidates.first { marker in
+            text[index...].hasPrefix(marker)
+        }
+    }
+
+    private static func nextMarkdownMarker(in text: String, after index: String.Index) -> String.Index {
+        var cursor = text.index(after: index)
+        while cursor < text.endIndex {
+            if text[cursor] == "*" || text[cursor] == "_" || text[cursor] == "`" {
+                return cursor
+            }
+            cursor = text.index(after: cursor)
+        }
+        return text.endIndex
     }
 
     private func makeBubbleColumn(mine: Bool, bubble: UIView, createdAt: Int?) -> UIStackView {
@@ -818,6 +964,35 @@ extension HermesLiveChatViewController: UIImagePickerControllerDelegate, UINavig
 
     public func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
         picker.dismiss(animated: true)
+    }
+}
+
+private extension NSMutableAttributedString {
+    func appendMarkdownSpan(_ text: String, font: UIFont, color: UIColor) {
+        append(NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: color,
+            ]
+        ))
+    }
+}
+
+private extension UIFont {
+    func bold() -> UIFont {
+        withSymbolicTraits(.traitBold)
+    }
+
+    func italic() -> UIFont {
+        withSymbolicTraits(.traitItalic)
+    }
+
+    private func withSymbolicTraits(_ traits: UIFontDescriptor.SymbolicTraits) -> UIFont {
+        guard let descriptor = fontDescriptor.withSymbolicTraits(fontDescriptor.symbolicTraits.union(traits)) else {
+            return self
+        }
+        return UIFont(descriptor: descriptor, size: pointSize)
     }
 }
 

@@ -16,6 +16,7 @@ class StoredSession {
     required this.tokenExp,
     this.realtimeUrl,
     this.lastConversationId,
+    this.identityKey,
   });
 
   final String appKey;
@@ -25,6 +26,7 @@ class StoredSession {
   final int tokenExp;
   final String? realtimeUrl;
   final String? lastConversationId;
+  final String? identityKey;
 
   Map<String, Object?> toJson() => {
         'app_key': appKey,
@@ -35,6 +37,7 @@ class StoredSession {
         if (realtimeUrl != null) 'realtime_url': realtimeUrl,
         if (lastConversationId != null)
           'last_conversation_id': lastConversationId,
+        if (identityKey != null) 'identity_key': identityKey,
       };
 
   factory StoredSession.fromJson(Map<String, Object?> json) {
@@ -46,6 +49,7 @@ class StoredSession {
       tokenExp: (json['token_exp'] as num).toInt(),
       realtimeUrl: json['realtime_url'] as String?,
       lastConversationId: json['last_conversation_id'] as String?,
+      identityKey: json['identity_key'] as String?,
     );
   }
 }

@@ -94,6 +94,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
   bool _uploadingImage = false;
   bool _hasSession = false;
   bool _conversationClosed = false;
+  bool _sessionBlocked = false;
   // Closed-conversation ids whose messages can be pulled in as history on
   // demand. Populated when a session opens; the messages themselves are not
   // loaded until the visitor taps the toggle bar or scrolls to the top.
@@ -123,7 +124,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
     if (widget.startSessionOnOpen && mounted) {
       await _ensureSession();
     }
-    if (mounted) {
+    if (mounted && !_sessionBlocked) {
       await _loadWelcome();
     }
   }
@@ -165,6 +166,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
       await _client.startSession(widget.identity);
       if (!mounted) return;
       _hasSession = true;
+      _sessionBlocked = false;
       final conversationId = _client.currentConversationId;
       // Closed conversations are not loaded eagerly: record their ids so the
       // toggle bar knows there is earlier history to pull in on demand.
@@ -204,7 +206,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
 
   Future<void> _sendText() async {
     final text = _input.text.trim();
-    if (text.isEmpty || _sending || _uploadingImage || _conversationClosed) {
+    if (text.isEmpty || _sending || _uploadingImage || _sessionBlocked) {
       return;
     }
 
@@ -244,7 +246,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
   }
 
   Future<void> _pickAndSendImage() async {
-    if (_uploadingImage || _sending || _conversationClosed) return;
+    if (_uploadingImage || _sending || _sessionBlocked) return;
     try {
       final image = await _imagePicker.pickImage(
         source: ImageSource.gallery,
@@ -455,11 +457,23 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
   }
 
   void _handleError(HermesLiveChatException error) {
-    widget.onError?.call(error);
     if (!mounted) return;
+    final blocking = _isBlockingIdentityError(error);
+    if (blocking && _sessionBlocked) return;
+    widget.onError?.call(error);
     setState(() {
       _errorText = error.message ?? error.error.name;
+      if (blocking) {
+        _sessionBlocked = true;
+        _hasSession = false;
+        _welcome = null;
+      }
     });
+  }
+
+  bool _isBlockingIdentityError(HermesLiveChatException error) {
+    return error.error == HermesLiveChatError.appInitTokenInvalid ||
+        error.error == HermesLiveChatError.appInitTokenExpired;
   }
 
   void _scrollToBottom() {
@@ -491,6 +505,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
               _ErrorBanner(
                 message: _errorText!,
                 onClose: () {
+                  if (_sessionBlocked) return;
                   setState(() {
                     _errorText = null;
                   });
@@ -501,7 +516,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
             ),
             _Composer(
               controller: _input,
-              enabled: !_conversationClosed,
+              enabled: !_conversationClosed && !_sessionBlocked,
               busy: _starting || _sending || _uploadingImage,
               uploadingImage: _uploadingImage,
               onSend: _sendText,
@@ -773,9 +788,15 @@ class _MessageBubble extends StatelessWidget {
             crossAxisAlignment: columnAlignment,
             children: [
               DecoratedBox(
-                decoration: BoxDecoration(color: background, borderRadius: radius),
+                decoration: BoxDecoration(
+                  color: background,
+                  borderRadius: radius,
+                ),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 9,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -805,9 +826,15 @@ class _MessageBubble extends StatelessWidget {
                           ),
                         ),
                       if (text.isNotEmpty)
-                        Text(
-                          text,
-                          style: TextStyle(color: foreground),
+                        RichText(
+                          text: TextSpan(
+                            style: DefaultTextStyle.of(context).style.copyWith(
+                                  color: foreground,
+                                ),
+                            children: mine
+                                ? [TextSpan(text: text)]
+                                : _inlineMarkdownSpans(text),
+                          ),
                         ),
                     ],
                   ),
@@ -829,6 +856,77 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
   }
+}
+
+List<TextSpan> _inlineMarkdownSpans(String text) {
+  final spans = <TextSpan>[];
+  var index = 0;
+  while (index < text.length) {
+    final boldMarker = text.startsWith('**', index)
+        ? '**'
+        : text.startsWith('__', index)
+            ? '__'
+            : null;
+    if (boldMarker != null) {
+      final close = text.indexOf(boldMarker, index + boldMarker.length);
+      if (close > index + boldMarker.length) {
+        spans.add(
+          TextSpan(
+            text: text.substring(index + boldMarker.length, close),
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        );
+        index = close + boldMarker.length;
+        continue;
+      }
+    }
+
+    if (text[index] == '`') {
+      final close = text.indexOf('`', index + 1);
+      if (close > index + 1) {
+        spans.add(
+          TextSpan(
+            text: text.substring(index + 1, close),
+            style: const TextStyle(fontFamily: 'monospace'),
+          ),
+        );
+        index = close + 1;
+        continue;
+      }
+    }
+
+    final italicMarker = text[index] == '*'
+        ? '*'
+        : text[index] == '_'
+            ? '_'
+            : null;
+    if (italicMarker != null) {
+      final close = text.indexOf(italicMarker, index + 1);
+      if (close > index + 1) {
+        spans.add(
+          TextSpan(
+            text: text.substring(index + 1, close),
+            style: const TextStyle(fontStyle: FontStyle.italic),
+          ),
+        );
+        index = close + 1;
+        continue;
+      }
+    }
+
+    final next = _nextMarkdownMarker(text, index + 1);
+    spans.add(TextSpan(text: text.substring(index, next)));
+    index = next;
+  }
+  return spans;
+}
+
+int _nextMarkdownMarker(String text, int startIndex) {
+  for (var i = startIndex; i < text.length; i += 1) {
+    final char = text[i];
+    if (char == '*' || char == '_' || char == '`') return i;
+  }
+  return text.length;
 }
 
 String _formatMessageTime(int seconds) {

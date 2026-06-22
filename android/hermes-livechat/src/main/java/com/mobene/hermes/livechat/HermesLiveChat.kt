@@ -83,7 +83,12 @@ object HermesLiveChat {
         // the backend would otherwise reuse the previous contact id and
         // ignore the new customerId. Only pass oldToken on token renewal.
         val oldToken = if (matches) cached?.token else null
-        val next = renewSession(identity, incomingKey, oldToken)
+        val next = try {
+            renewSession(identity, incomingKey, oldToken)
+        } catch (error: HermesLiveChatException) {
+            handleInitFailure(cfg.appKey, error)
+            throw error
+        }
         refreshCurrentConversation(next.token)
         connectRealtime(next.realtimeUrl ?: cfg.realtimeUrl, next.token)
         return next.toVisitorSession(cfg.realtimeUrl)
@@ -299,7 +304,12 @@ object HermesLiveChat {
         currentConversationId = currentConversationId ?: session.lastConversationId
         if (!isExpired(session.tokenExp)) return session.token
 
-        val next = renewSession(VisitorIdentity(), session.identityKey, session.token, session.realtimeUrl)
+        val next = try {
+            renewSession(VisitorIdentity(), session.identityKey, session.token, session.realtimeUrl)
+        } catch (error: HermesLiveChatException) {
+            handleInitFailure(cfg.appKey, error)
+            throw error
+        }
         refreshCurrentConversation(next.token)
         connectRealtime(next.realtimeUrl ?: cfg.realtimeUrl, next.token)
         return next.token
@@ -372,6 +382,19 @@ object HermesLiveChat {
         realtimeToken = null
         realtimeState = LiveChatConnectionState.IDLE
         realtime?.disconnect()
+    }
+
+    private fun handleInitFailure(appKey: String, error: HermesLiveChatException) {
+        if (error.error != HermesLiveChatError.APP_INIT_TOKEN_INVALID &&
+            error.error != HermesLiveChatError.APP_INIT_TOKEN_EXPIRED
+        ) {
+            return
+        }
+        stored = null
+        currentConversationId = null
+        store?.clear(appKey)
+        disconnectRealtime()
+        _events.tryEmit(HermesLiveChatEvent.Error(error))
     }
 
     private fun touchRealtimeActivity() {

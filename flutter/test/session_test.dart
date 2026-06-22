@@ -76,6 +76,7 @@ class _FakeApi extends ApiClient {
   String tokenValue = 'visitor_token_value';
   int tokenExp = 1778755200;
   int closedFailures = 0;
+  HermesLiveChatException? initError;
   String responseConversationId = 'conv_1';
   String responseRealtimeUrl = 'wss://chat.example.com/connection/websocket';
   List<Conversation> conversations = const [];
@@ -89,6 +90,8 @@ class _FakeApi extends ApiClient {
   }) async {
     initCalls += 1;
     lastOldVisitorToken = oldVisitorToken;
+    final error = initError;
+    if (error != null) throw error;
     return {
       'visitor_id': 'v_1',
       'contact_id': 12345,
@@ -220,6 +223,106 @@ void main() {
       );
       expect(transport.connectCalls, 1);
       expect(transport.lastToken, 'cached_token');
+
+      await session.destroy();
+    });
+
+    test('does not reuse cached session for a different customerId', () async {
+      final config = _baseConfig();
+      final store = _MemoryStore();
+      final future = DateTime.now()
+              .add(const Duration(hours: 12))
+              .millisecondsSinceEpoch ~/
+          1000;
+      await store.save(
+        StoredSession(
+          appKey: 'app_xxx',
+          visitorId: 'v_old',
+          contactId: 111,
+          token: 'cached_token',
+          tokenExp: future,
+          lastConversationId: 'conv_cached',
+          identityKey: 'cust_old',
+        ),
+      );
+      final api = _FakeApi(config);
+      final transport = _FakeTransport();
+      final session = Session(
+        config: config,
+        api: api,
+        transport: transport,
+        store: store,
+      );
+
+      final result = await session.startSession(
+        const VisitorIdentity(customerId: 'cust_new'),
+      );
+
+      expect(api.initCalls, 1);
+      expect(api.lastOldVisitorToken, isNull);
+      expect(session.currentConversationId, isNull);
+      expect(result.visitorId, 'v_1');
+      expect(store._stored?.identityKey, 'cust_new');
+
+      await session.destroy();
+    });
+
+    test('clears cached session and emits error on app identity init failure',
+        () async {
+      final config = _baseConfig();
+      final store = _MemoryStore();
+      await store.save(
+        StoredSession(
+          appKey: 'app_xxx',
+          visitorId: 'v_old',
+          contactId: 111,
+          token: 'expired_token',
+          tokenExp: 1,
+          lastConversationId: 'conv_cached',
+          identityKey: 'cust_1',
+        ),
+      );
+      final api = _FakeApi(config)
+        ..initError = const HermesLiveChatException(
+          HermesLiveChatError.appInitTokenInvalid,
+          code: 'LC_APP_INIT_TOKEN_INVALID',
+          message: 'App 身份 token 无效',
+        );
+      final transport = _FakeTransport();
+      final session = Session(
+        config: config,
+        api: api,
+        transport: transport,
+        store: store,
+      );
+      final eventFuture = session.events.firstWhere((event) {
+        return event is HermesError &&
+            event.error.error == HermesLiveChatError.appInitTokenInvalid;
+      });
+
+      await expectLater(
+        session.startSession(
+          const VisitorIdentity(
+            customerId: 'cust_1',
+            identityToken: 'bad.jwt',
+          ),
+        ),
+        throwsA(
+          isA<HermesLiveChatException>().having(
+            (error) => error.error,
+            'error',
+            HermesLiveChatError.appInitTokenInvalid,
+          ),
+        ),
+      );
+
+      expect(store._stored, isNull);
+      expect(session.currentConversationId, isNull);
+      expect(transport.disconnectCalls, 1);
+      expect(
+        await eventFuture.timeout(const Duration(seconds: 1)),
+        isA<HermesError>(),
+      );
 
       await session.destroy();
     });

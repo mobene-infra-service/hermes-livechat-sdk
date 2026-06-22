@@ -61,6 +61,11 @@ internal final class SessionStore {
         }
     }
 
+    func clear(appKey: String) {
+        KeychainStore.delete(service: service, account: account(appKey))
+        UserDefaults.standard.removeObject(forKey: userDefaultsKey(appKey))
+    }
+
     private func account(_ appKey: String) -> String {
         "\(scope)|\(appKey)"
     }
@@ -93,6 +98,10 @@ private enum KeychainStore {
         query[kSecValueData as String] = data
         query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    static func delete(service: String, account: String) {
+        SecItemDelete(baseQuery(service: service, account: account) as CFDictionary)
     }
 
     private static func baseQuery(service: String, account: String) -> [String: Any] {

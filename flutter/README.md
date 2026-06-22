@@ -141,7 +141,7 @@ Navigator.of(context).push(
 - 图片选择、上传和图片消息展示
 - 历史消息
 - 实时下行消息
-- 连接状态和错误提示
+- 连接状态和页面级错误提示；SDK / 网络 / 初始化失败不会写入聊天消息流
 - 会话关闭后的输入禁用
 
 业务 App 也可以继续用能力层的 `sendImage()` 接入自己的图片选择和预览。
@@ -282,6 +282,8 @@ if (conversationId != null) {
 
 `exp` 必填，建议有效期 5 分钟内；`app_key` 如存在必须与当前 App 渠道一致。
 
+当 `/init` 返回 `APP_INIT_TOKEN_INVALID` 或 `APP_INIT_TOKEN_EXPIRED` 时，SDK 会清空当前 `appKey` 下的本地 visitor session、断开 realtime，并通过 `HermesError` 事件抛出错误。默认聊天页会把 SDK / 网络 / 初始化失败展示为页面级错误提示，不写入聊天消息流；身份 token 无效或过期时还会进入不可发送状态，不再继续展示欢迎语伪装成已连通会话。宿主 App 应重新向客户 App Backend 获取新的 `identity_token` 后再打开聊天页或重试 `startSession()`。
+
 ## 生命周期
 
 - 进入后台后，SDK 默认等待 30 秒再断开 WebSocket，避免短暂切后台造成频繁重连。
@@ -298,6 +300,10 @@ if (conversationId != null) {
 **`channelDisabled` / `orgDisabled`**
 
 检查管理后台 App 渠道是否启用、机构是否开通 LiveChat。
+
+**`appInitTokenInvalid` / `appInitTokenExpired`**
+
+App 渠道开启了「Secret 验证」，但 `identityToken` 缺失、签名 secret 不匹配、`app_key/aud/exp` 不合法或已过期。
 
 **收不到实时消息**
 

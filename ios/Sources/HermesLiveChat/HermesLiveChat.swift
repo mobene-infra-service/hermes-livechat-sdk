@@ -356,7 +356,7 @@ public final class HermesLiveChat {
         fallbackRealtimeUrl: URL?
     ) async throws -> StoredSession {
         let cfg = try requireConfig()
-        let json = try await requireApi().initSession(identity: identity, oldVisitorToken: oldToken)
+        let json = try await initSession(identity: identity, oldToken: oldToken)
         let realtimeUrl = ((json["realtime"] as? [String: Any])?["url"] as? String)
             .flatMap(URL.init(string:)) ?? fallbackRealtimeUrl ?? cfg.realtimeUrl
         let fallback = stored
@@ -380,6 +380,25 @@ public final class HermesLiveChat {
         if let active = conversations.first(where: { $0.status != "closed" }) {
             rememberConversation(active.uuid)
         }
+    }
+
+    private func initSession(identity: VisitorIdentity, oldToken: String?) async throws -> [String: Any] {
+        do {
+            return try await requireApi().initSession(identity: identity, oldVisitorToken: oldToken)
+        } catch let error as HermesLiveChatException {
+            handleInitFailure(error)
+            throw error
+        }
+    }
+
+    private func handleInitFailure(_ error: HermesLiveChatException) {
+        guard error.error == .appInitTokenInvalid || error.error == .appInitTokenExpired else { return }
+        guard let appKey = config?.appKey else { return }
+        stored = nil
+        currentConversationId = nil
+        store.clear(appKey: appKey)
+        disconnect()
+        emit(.error(error))
     }
 
     private func ensureRealtimeConnected(token: String) throws {

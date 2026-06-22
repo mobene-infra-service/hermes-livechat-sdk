@@ -70,8 +70,14 @@ class Session {
 
   Future<VisitorSession> startSession(VisitorIdentity identity) async {
     final cached = _stored ?? await store.load(config.appKey);
-    _currentConversationId ??= cached?.lastConversationId;
-    if (cached != null && !_isExpired(cached.tokenExp)) {
+    final incomingKey = _identityKey(identity);
+    final matches = _identityMatches(cached?.identityKey, incomingKey);
+    if (matches) {
+      _currentConversationId ??= cached?.lastConversationId;
+    } else {
+      _currentConversationId = null;
+    }
+    if (cached != null && matches && !_isExpired(cached.tokenExp)) {
       _stored = cached;
       await _connectTransport(
         cached.realtimeUrl ?? config.realtimeUrl,
@@ -80,9 +86,9 @@ class Session {
       return _visitorSession(cached);
     }
 
-    final json = await api.init(
+    final json = await _initSession(
       identity: identity,
-      oldVisitorToken: cached?.token,
+      oldVisitorToken: matches ? cached?.token : null,
     );
 
     final visitorId = json['visitor_id'] as String;
@@ -102,6 +108,7 @@ class Session {
       tokenExp: tokenExp,
       realtimeUrl: realtimeUrl,
       lastConversationId: _currentConversationId,
+      identityKey: incomingKey ?? _stored?.identityKey,
     );
     await store.save(_stored!);
     await _refreshCurrentConversation(token);
@@ -412,7 +419,7 @@ class Session {
     if (!_isExpired(stored.tokenExp)) return stored.token;
     // Silent renewal: backend accepts an expired visitor token within the
     // configured renewal window.
-    final renewed = await api.init(
+    final renewed = await _initSession(
       identity: const VisitorIdentity(),
       oldVisitorToken: stored.token,
     );
@@ -430,6 +437,7 @@ class Session {
       tokenExp: exp,
       realtimeUrl: realtimeUrl,
       lastConversationId: stored.lastConversationId,
+      identityKey: stored.identityKey,
     );
     await store.save(_stored!);
     await _refreshCurrentConversation(token);
@@ -450,9 +458,47 @@ class Session {
     }
   }
 
+  Future<Map<String, Object?>> _initSession({
+    required VisitorIdentity identity,
+    required String? oldVisitorToken,
+  }) async {
+    try {
+      return await api.init(
+        identity: identity,
+        oldVisitorToken: oldVisitorToken,
+      );
+    } on HermesLiveChatException catch (error) {
+      await _handleInitFailure(error);
+      rethrow;
+    }
+  }
+
+  Future<void> _handleInitFailure(HermesLiveChatException error) async {
+    if (error.error != HermesLiveChatError.appInitTokenInvalid &&
+        error.error != HermesLiveChatError.appInitTokenExpired) {
+      return;
+    }
+    _stored = null;
+    _currentConversationId = null;
+    await store.clear(config.appKey);
+    await disconnect();
+    _events.add(HermesError(error));
+  }
+
   bool _isExpired(int exp) {
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     return exp - now <= config.refreshLeewaySeconds;
+  }
+
+  String? _identityKey(VisitorIdentity identity) {
+    final value = identity.customerId?.trim();
+    if (value == null || value.isEmpty) return null;
+    return value;
+  }
+
+  bool _identityMatches(String? cached, String? incoming) {
+    if (incoming == null || incoming.isEmpty) return true;
+    return cached == incoming;
   }
 
   VisitorSession _visitorSession(StoredSession session) {
