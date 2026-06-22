@@ -708,7 +708,7 @@ class HermesLiveChatActivity : Activity() {
             if (messageKeys.isNotEmpty()) return
         }
         if (welcomePlaceholder != null) return
-        welcomePlaceholder = addBubble(text, mine = false)
+        welcomePlaceholder = addBubble(text, mine = false, createdAt = nowSeconds())
     }
 
     private fun removeWelcomePlaceholder() {
@@ -879,6 +879,9 @@ class HermesLiveChatActivity : Activity() {
         setTextColor(TEXT_MUTED)
         setPadding(dp(4), dp(4), dp(4), 0)
     }
+
+    private fun nowSeconds(): Long =
+        System.currentTimeMillis() / 1000
 
     private fun formatTime(seconds: Long): String =
         timeFormatter.format(Date(seconds * 1000))

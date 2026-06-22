@@ -721,6 +721,7 @@ class _MessageBubble extends StatelessWidget {
     required this.text,
     required this.mine,
     required this.senderType,
+    required this.createdAt,
     this.imageUrl,
   });
 
@@ -733,12 +734,14 @@ class _MessageBubble extends StatelessWidget {
       imageUrl: imageUrl,
       mine: message.senderType == 'visitor',
       senderType: message.senderType,
+      createdAt: message.createdAt,
     );
   }
 
   final String text;
   final bool mine;
   final String senderType;
+  final int createdAt;
   final String? imageUrl;
 
   static const _imageMaxWidth = 220.0;
@@ -751,6 +754,8 @@ class _MessageBubble extends StatelessWidget {
         mine ? colorScheme.primary : colorScheme.surfaceContainerHighest;
     final foreground = mine ? colorScheme.onPrimary : colorScheme.onSurface;
     final alignment = mine ? Alignment.centerRight : Alignment.centerLeft;
+    final columnAlignment =
+        mine ? CrossAxisAlignment.end : CrossAxisAlignment.start;
     final radius = BorderRadius.only(
       topLeft: const Radius.circular(12),
       topRight: const Radius.circular(12),
@@ -764,51 +769,76 @@ class _MessageBubble extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 320),
-          child: DecoratedBox(
-            decoration: BoxDecoration(color: background, borderRadius: radius),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (imageUrl != null)
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxWidth: _imageMaxWidth,
-                        maxHeight: _imageMaxHeight,
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: ColoredBox(
-                          color: colorScheme.surfaceContainerHighest,
-                          child: Image.network(
-                            imageUrl!,
-                            width: _imageMaxWidth,
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) => Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: Text(
-                                '图片加载失败',
-                                style: TextStyle(color: foreground),
+          child: Column(
+            crossAxisAlignment: columnAlignment,
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(color: background, borderRadius: radius),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (imageUrl != null)
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: _imageMaxWidth,
+                            maxHeight: _imageMaxHeight,
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: ColoredBox(
+                              color: colorScheme.surfaceContainerHighest,
+                              child: Image.network(
+                                imageUrl!,
+                                width: _imageMaxWidth,
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, __, ___) => Padding(
+                                  padding: const EdgeInsets.all(8),
+                                  child: Text(
+                                    '图片加载失败',
+                                    style: TextStyle(color: foreground),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                  if (text.isNotEmpty)
-                    Text(
-                      text,
-                      style: TextStyle(color: foreground),
-                    ),
-                ],
+                      if (text.isNotEmpty)
+                        Text(
+                          text,
+                          style: TextStyle(color: foreground),
+                        ),
+                    ],
+                  ),
+                ),
               ),
-            ),
+              if (createdAt > 0)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 3, 4, 0),
+                  child: Text(
+                    _formatMessageTime(createdAt),
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
     );
   }
+}
+
+String _formatMessageTime(int seconds) {
+  final date = DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+  return '${_twoDigits(date.month)}-${_twoDigits(date.day)} '
+      '${_twoDigits(date.hour)}:${_twoDigits(date.minute)}';
+}
+
+String _twoDigits(int value) {
+  return value.toString().padLeft(2, '0');
 }
 
 class _Composer extends StatelessWidget {

@@ -459,7 +459,7 @@ public final class HermesLiveChatViewController: UIViewController {
             guard messageKeys.isEmpty else { return }
         }
         guard welcomePlaceholder == nil else { return }
-        welcomePlaceholder = addBubble(text, mine: false, createdAt: nil)
+        welcomePlaceholder = addBubble(text, mine: false, createdAt: Self.nowSeconds())
     }
 
     private func removeWelcomePlaceholder() {
@@ -772,6 +772,10 @@ public final class HermesLiveChatViewController: UIViewController {
 
     private static func formatTime(_ seconds: Int) -> String {
         timeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(seconds)))
+    }
+
+    private static func nowSeconds() -> Int {
+        Int(Date().timeIntervalSince1970)
     }
 
     private func scrollToBottom(animated: Bool = true) {
