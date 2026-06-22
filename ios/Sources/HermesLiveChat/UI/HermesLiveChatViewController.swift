@@ -51,7 +51,6 @@ public final class HermesLiveChatViewController: UIViewController {
     // demand. Populated when a session opens; the messages themselves are not
     // loaded until the visitor taps the toggle bar or scrolls to the top.
     private var historyConversationIds: [String] = []
-    private var historyExpanded = false
     private var historyLoading = false
     private var historyToggle: UIButton?
     private var isLoadingInitialState = false {
@@ -561,7 +560,7 @@ public final class HermesLiveChatViewController: UIViewController {
     // refreshHistoryToggle shows or hides the "view earlier messages" bar at the
     // top of the list. It appears only while there is unloaded closed history.
     private func refreshHistoryToggle() {
-        let shouldShow = !historyConversationIds.isEmpty && !historyExpanded
+        let shouldShow = !historyConversationIds.isEmpty
         guard shouldShow else {
             if let toggle = historyToggle {
                 stack.removeArrangedSubview(toggle)
@@ -595,23 +594,18 @@ public final class HermesLiveChatViewController: UIViewController {
         Task { await loadHistory() }
     }
 
-    // loadHistory pulls in earlier closed-conversation messages on demand and
-    // reveals them while keeping the visitor's view anchored: prepending older
-    // messages above the viewport would otherwise yank the scroll position, so we
-    // offset by the height that appears. The fetch runs once; failures reset so
-    // the visitor can retry by tapping the bar again.
+    // loadHistory pulls in one closed conversation at a time, newest first, and
+    // reveals it while keeping the visitor's view anchored. If more history is
+    // available the toggle remains so the visitor can keep paging upward.
     private func loadHistory() async {
-        guard !historyExpanded, !historyLoading, !historyConversationIds.isEmpty else { return }
+        guard !historyLoading, let conversationId = historyConversationIds.first else { return }
         historyLoading = true
         await MainActor.run { refreshHistoryToggle() }
         do {
-            var loaded: [Message] = []
-            for conversationId in historyConversationIds {
-                loaded += try await HermesLiveChat.shared.conversationMessages(conversationId: conversationId)
-            }
+            let loaded = try await HermesLiveChat.shared.conversationMessages(conversationId: conversationId)
             await MainActor.run {
                 clearErrorBanner()
-                historyExpanded = true
+                historyConversationIds.removeFirst()
                 prependHistory(loaded)
             }
         } catch {

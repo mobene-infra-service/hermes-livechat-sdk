@@ -88,7 +88,6 @@ class HermesLiveChatActivity : Activity() {
     // demand. Populated when a session opens; the messages themselves are not
     // loaded until the visitor taps the toggle bar or scrolls to the top.
     private var historyConversationIds: List<String> = emptyList()
-    private var historyExpanded = false
     private var historyLoading = false
     private var historyToggle: TextView? = null
     private var historyPullStartY: Float? = null
@@ -637,7 +636,7 @@ class HermesLiveChatActivity : Activity() {
     // refreshHistoryToggle shows or hides the "view earlier messages" bar at the
     // top of the list. It appears only while there is unloaded closed history.
     private fun refreshHistoryToggle() {
-        val shouldShow = historyConversationIds.isNotEmpty() && !historyExpanded
+        val shouldShow = historyConversationIds.isNotEmpty()
         if (!shouldShow) {
             historyToggle?.let(messages::removeView)
             historyToggle = null
@@ -663,25 +662,20 @@ class HermesLiveChatActivity : Activity() {
         setOnClickListener { loadHistory() }
     }
 
-    // loadHistory pulls in earlier closed-conversation messages on demand and
-    // reveals them while keeping the visitor's view anchored: prepending older
-    // messages above the viewport would otherwise yank the scroll position, so we
-    // offset by the height that appears. The fetch runs once; failures reset so
-    // the visitor can retry by tapping the bar again.
+    // loadHistory pulls in one closed conversation at a time, newest first, and
+    // reveals it while keeping the visitor's view anchored. If more history is
+    // available the toggle remains so the visitor can keep paging upward.
     private fun loadHistory() {
-        if (historyExpanded || historyLoading || historyConversationIds.isEmpty()) return
+        if (historyLoading || historyConversationIds.isEmpty()) return
         historyLoading = true
         refreshHistoryToggle()
         scope.launch {
             runCatching {
-                val loaded = mutableListOf<Message>()
-                for (conversationId in historyConversationIds) {
-                    loaded += HermesLiveChat.conversationMessages(conversationId)
-                }
-                loaded
+                val conversationId = historyConversationIds.first()
+                HermesLiveChat.conversationMessages(conversationId)
             }.onSuccess { loaded ->
                 clearErrorBanner()
-                historyExpanded = true
+                historyConversationIds = historyConversationIds.drop(1)
                 prependHistory(loaded)
             }.onFailure {
                 handleSessionError(it, fallback = "加载更早消息失败")
@@ -693,7 +687,7 @@ class HermesLiveChatActivity : Activity() {
     }
 
     private fun handleHistoryPull(event: MotionEvent) {
-        if (historyExpanded || historyLoading || historyConversationIds.isEmpty()) {
+        if (historyLoading || historyConversationIds.isEmpty()) {
             resetHistoryPull()
             return
         }

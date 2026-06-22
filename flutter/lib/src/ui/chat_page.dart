@@ -99,7 +99,6 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
   // demand. Populated when a session opens; the messages themselves are not
   // loaded until the visitor taps the toggle bar or scrolls to the top.
   List<String> _historyConversationIds = const [];
-  bool _historyExpanded = false;
   bool _historyLoading = false;
 
   @override
@@ -378,15 +377,11 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
     }
   }
 
-  // _loadHistory pulls in earlier closed-conversation messages on demand and
-  // reveals them while keeping the visitor anchored: prepending older messages
-  // above the viewport would otherwise yank the scroll position, so we offset by
-  // the height that appears. The fetch runs once; failures reset so the visitor
-  // can retry by tapping the bar again.
+  // _loadHistory pulls in one closed conversation at a time, newest first, and
+  // reveals it while keeping the visitor anchored. If more history is available
+  // the toggle remains so the visitor can keep paging upward.
   Future<void> _loadHistory() async {
-    if (_historyExpanded ||
-        _historyLoading ||
-        _historyConversationIds.isEmpty) {
+    if (_historyLoading || _historyConversationIds.isEmpty) {
       return;
     }
     setState(() => _historyLoading = true);
@@ -394,14 +389,12 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
         _scroll.hasClients ? _scroll.position.maxScrollExtent : 0.0;
     final beforePixels = _scroll.hasClients ? _scroll.position.pixels : 0.0;
     try {
-      final loaded = <Message>[];
-      for (final conversationId in _historyConversationIds) {
-        loaded.addAll(
-          await _client.conversationMessages(conversationId: conversationId),
-        );
-      }
+      final conversationId = _historyConversationIds.first;
+      final loaded = await _client.conversationMessages(
+        conversationId: conversationId,
+      );
       if (!mounted) return;
-      _historyExpanded = true;
+      _historyConversationIds = _historyConversationIds.skip(1).toList();
       _mergeMessages(loaded, scrollToBottom: false);
       _anchorAfterPrepend(beforeMax, beforePixels);
     } on HermesLiveChatException catch (error) {
@@ -546,8 +539,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
     // On a fresh chat earlier closed-conversation history is not loaded yet.
     // While it is unloaded, a "view earlier messages" bar sits at the top;
     // tapping it (or scrolling to the top) pulls the messages in.
-    final showHistoryToggle =
-        _historyConversationIds.isNotEmpty && !_historyExpanded;
+    final showHistoryToggle = _historyConversationIds.isNotEmpty;
 
     if (visible.isEmpty && !showHistoryToggle) {
       return Center(
