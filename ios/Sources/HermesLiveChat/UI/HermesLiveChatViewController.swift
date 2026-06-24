@@ -45,8 +45,12 @@ public final class HermesLiveChatViewController: UIViewController {
     }
     private var eventsTask: Task<Void, Never>?
     private var welcomePlaceholder: UIView?
+    private var welcomePlaceholderText: String?
     private var hasPersistedWelcome = false
     private var pendingBubble: UIView?
+    private var pendingText: String?
+    private var suppressMessageScroll = false
+    private var needsScrollAfterSuppressedUpdate = false
     // Closed-conversation ids whose messages can be pulled in as history on
     // demand. Populated when a session opens; the messages themselves are not
     // loaded until the visitor taps the toggle bar or scrolls to the top.
@@ -319,7 +323,7 @@ public final class HermesLiveChatViewController: UIViewController {
                 .map { Self.closedConversationIds($0, activeId: activeId) } ?? []
             if let id = activeId {
                 let messages = try await HermesLiveChat.shared.history(conversationId: id)
-                await MainActor.run { messages.forEach(addMessage) }
+                await MainActor.run { messages.forEach { addMessage($0, allowPendingClaim: false) } }
             }
             // Render the prefetched welcome whenever there is no active
             // conversation — first visit, or the previous one is closed.
@@ -370,7 +374,9 @@ public final class HermesLiveChatViewController: UIViewController {
             }
             guard await ensureSession() else {
                 await MainActor.run {
-                    removePendingBubble()
+                    performMessageUpdatesWithoutAnimation {
+                        removePendingBubble()
+                    }
                     input.text = text
                 }
                 return
@@ -378,13 +384,17 @@ public final class HermesLiveChatViewController: UIViewController {
             do {
                 let messages = try await HermesLiveChat.shared.sendTextMessages(text)
                 await MainActor.run {
-                    clearErrorBanner()
-                    removePendingBubble()
-                    messages.forEach(addMessage)
+                    performMessageUpdatesWithoutAnimation {
+                        clearErrorBanner()
+                        messages.forEach { addMessage($0) }
+                        removePendingBubble()
+                    }
                 }
             } catch {
                 await MainActor.run {
-                    removePendingBubble()
+                    performMessageUpdatesWithoutAnimation {
+                        removePendingBubble()
+                    }
                     input.text = text
                     handleError(error, fallback: "发送失败")
                 }
@@ -427,7 +437,7 @@ public final class HermesLiveChatViewController: UIViewController {
                 )
                 await MainActor.run {
                     clearErrorBanner()
-                    messages.forEach(addMessage)
+                    messages.forEach { addMessage($0) }
                 }
             } catch {
                 await MainActor.run { handleError(error, fallback: "图片发送失败") }
@@ -530,7 +540,16 @@ public final class HermesLiveChatViewController: UIViewController {
             guard messageKeys.isEmpty else { return }
         }
         guard welcomePlaceholder == nil else { return }
-        welcomePlaceholder = addBubble(text, mine: false, createdAt: Self.nowSeconds())
+        let row = makeTextRow(text: text, mine: false, createdAt: Self.nowSeconds())
+        if let pendingBubble, let index = stack.arrangedSubviews.firstIndex(where: { $0 === pendingBubble }) {
+            stack.insertArrangedSubview(row, at: index)
+            requestMessageScrollToBottom()
+        } else {
+            stack.addArrangedSubview(row)
+            requestMessageScrollToBottom()
+        }
+        welcomePlaceholder = row
+        welcomePlaceholderText = text
     }
 
     private func removeWelcomePlaceholder() {
@@ -538,6 +557,7 @@ public final class HermesLiveChatViewController: UIViewController {
         stack.removeArrangedSubview(view)
         view.removeFromSuperview()
         welcomePlaceholder = nil
+        welcomePlaceholderText = nil
     }
 
     // showPendingBubble renders the visitor's outgoing text optimistically while
@@ -547,7 +567,8 @@ public final class HermesLiveChatViewController: UIViewController {
     // above the confirmed message instead of being re-appended below it.
     private func showPendingBubble(_ text: String) {
         removePendingBubble()
-        pendingBubble = addBubble(text, mine: true, createdAt: nil)
+        pendingText = text
+        pendingBubble = addBubble(text, mine: true, createdAt: Self.nowSeconds())
     }
 
     private func removePendingBubble() {
@@ -555,6 +576,7 @@ public final class HermesLiveChatViewController: UIViewController {
         stack.removeArrangedSubview(view)
         view.removeFromSuperview()
         pendingBubble = nil
+        pendingText = nil
     }
 
     // refreshHistoryToggle shows or hides the "view earlier messages" bar at the
@@ -637,16 +659,87 @@ public final class HermesLiveChatViewController: UIViewController {
         scroll.contentOffset.y = previousOffset + (scroll.contentSize.height - previousHeight)
     }
 
-    private func addMessage(_ message: Message) {
+    private func addMessage(_ message: Message, allowPendingClaim: Bool = true) {
         if let key = messageKey(message), !messageKeys.insert(key).inserted {
             return
         }
         if message.contentType == "welcome" {
             hasPersistedWelcome = true
-            removeWelcomePlaceholder()
+            if claimWelcomePlaceholder(for: message) {
+                markMessageReadIfNeeded(message)
+                requestMessageScrollToBottom()
+                return
+            }
+            if insertWelcomeBeforePendingIfNeeded(message) {
+                markMessageReadIfNeeded(message)
+                requestMessageScrollToBottom()
+                return
+            }
+        }
+        if allowPendingClaim, claimPendingBubble(for: message) {
+            requestMessageScrollToBottom()
+            return
         }
         addBubble(message, mine: message.senderType == "visitor")
         markMessageReadIfNeeded(message)
+    }
+
+    private func claimWelcomePlaceholder(for message: Message) -> Bool {
+        guard message.contentType == "welcome", let placeholder = welcomePlaceholder else { return false }
+
+        let incoming = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existing = welcomePlaceholderText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !incoming.isEmpty, let existing, incoming != existing {
+            let row = makeMessageRow(message, mine: message.senderType == "visitor")
+            replaceArrangedSubview(placeholder, with: row)
+        } else if let pendingBubble,
+                  let welcomeIndex = stack.arrangedSubviews.firstIndex(where: { $0 === placeholder }),
+                  let pendingIndex = stack.arrangedSubviews.firstIndex(where: { $0 === pendingBubble }),
+                  welcomeIndex > pendingIndex {
+            stack.removeArrangedSubview(placeholder)
+            stack.insertArrangedSubview(placeholder, at: pendingIndex)
+        }
+        welcomePlaceholder = nil
+        welcomePlaceholderText = nil
+        return true
+    }
+
+    private func insertWelcomeBeforePendingIfNeeded(_ message: Message) -> Bool {
+        guard message.contentType == "welcome", let pendingBubble else { return false }
+        let row = makeMessageRow(message, mine: message.senderType == "visitor")
+        if let index = stack.arrangedSubviews.firstIndex(where: { $0 === pendingBubble }) {
+            stack.insertArrangedSubview(row, at: index)
+        } else {
+            stack.addArrangedSubview(row)
+        }
+        return true
+    }
+
+    private func claimPendingBubble(for message: Message) -> Bool {
+        guard let pendingRow = pendingBubble else { return false }
+        guard message.senderType == "visitor", message.contentType == "text" else { return false }
+
+        let incoming = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expected = pendingText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let expected, expected != incoming {
+            let row = makeMessageRow(message, mine: true)
+            replaceArrangedSubview(pendingRow, with: row)
+        }
+
+        pendingBubble = nil
+        pendingText = nil
+        return true
+    }
+
+    private func replaceArrangedSubview(_ oldView: UIView, with newView: UIView) {
+        let index = stack.arrangedSubviews.firstIndex { $0 === oldView }
+        stack.removeArrangedSubview(oldView)
+        oldView.removeFromSuperview()
+        if let index {
+            stack.insertArrangedSubview(newView, at: index)
+        } else {
+            stack.addArrangedSubview(newView)
+        }
     }
 
     private func markMessageReadIfNeeded(_ message: Message) {
@@ -662,7 +755,7 @@ public final class HermesLiveChatViewController: UIViewController {
                 try await HermesLiveChat.shared.markRead(conversationId: conversationId, messageId: messageId)
             } catch {
                 await MainActor.run {
-                    self?.readMarkedMessageIds.remove(messageId)
+                    _ = self?.readMarkedMessageIds.remove(messageId)
                 }
             }
         }
@@ -677,14 +770,9 @@ public final class HermesLiveChatViewController: UIViewController {
 
     @discardableResult
     private func addBubble(_ text: String, mine: Bool, createdAt: Int?) -> UIView {
-        let bubble = makeBubbleView(text: text, mine: mine)
-        let column = makeBubbleColumn(mine: mine, bubble: bubble, createdAt: createdAt)
-        let row = UIView()
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(column)
+        let row = makeTextRow(text: text, mine: mine, createdAt: createdAt)
         stack.addArrangedSubview(row)
-        activateBubbleConstraints(row: row, column: column, bubble: bubble, mine: mine)
-        scrollToBottom()
+        requestMessageScrollToBottom()
         return row
     }
 
@@ -692,7 +780,7 @@ public final class HermesLiveChatViewController: UIViewController {
     private func addBubble(_ message: Message, mine: Bool) -> UIView {
         let row = makeMessageRow(message, mine: mine)
         stack.addArrangedSubview(row)
-        scrollToBottom()
+        requestMessageScrollToBottom()
         return row
     }
 
@@ -701,6 +789,16 @@ public final class HermesLiveChatViewController: UIViewController {
     private func makeMessageRow(_ message: Message, mine: Bool) -> UIView {
         let bubble = makeMessageBubbleView(message, mine: mine)
         let column = makeBubbleColumn(mine: mine, bubble: bubble, createdAt: message.createdAt)
+        let row = UIView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(column)
+        activateBubbleConstraints(row: row, column: column, bubble: bubble, mine: mine)
+        return row
+    }
+
+    private func makeTextRow(text: String, mine: Bool, createdAt: Int?) -> UIView {
+        let bubble = makeBubbleView(text: text, mine: mine)
+        let column = makeBubbleColumn(mine: mine, bubble: bubble, createdAt: createdAt)
         let row = UIView()
         row.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(column)
@@ -916,6 +1014,28 @@ public final class HermesLiveChatViewController: UIViewController {
 
     private static func nowSeconds() -> Int {
         Int(Date().timeIntervalSince1970)
+    }
+
+    private func requestMessageScrollToBottom() {
+        if suppressMessageScroll {
+            needsScrollAfterSuppressedUpdate = true
+            return
+        }
+        scrollToBottom()
+    }
+
+    private func performMessageUpdatesWithoutAnimation(_ updates: () -> Void) {
+        let wasSuppressing = suppressMessageScroll
+        suppressMessageScroll = true
+        UIView.performWithoutAnimation {
+            updates()
+            view.layoutIfNeeded()
+        }
+        suppressMessageScroll = wasSuppressing
+        if !wasSuppressing, needsScrollAfterSuppressedUpdate {
+            needsScrollAfterSuppressedUpdate = false
+            scrollToBottom(animated: false)
+        }
     }
 
     private func scrollToBottom(animated: Bool = true) {

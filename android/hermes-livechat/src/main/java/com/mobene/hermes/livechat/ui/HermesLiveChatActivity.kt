@@ -81,9 +81,12 @@ class HermesLiveChatActivity : Activity() {
     private val messageKeys = mutableSetOf<String>()
     private val readMarkedMessageIds = mutableSetOf<String>()
     private var welcomePlaceholder: View? = null
+    private var welcomePlaceholderText: String? = null
     private var hasPersistedWelcome = false
     private var pendingBubble: View? = null
     private var pendingText: String? = null
+    private var suppressMessageScroll = false
+    private var needsScrollAfterSuppressedUpdate = false
     // Closed-conversation ids whose messages can be pulled in as history on
     // demand. Populated when a session opens; the messages themselves are not
     // loaded until the visitor taps the toggle bar or scrolls to the top.
@@ -473,13 +476,17 @@ class HermesLiveChatActivity : Activity() {
                 }
                 HermesLiveChat.sendTextMessages(text)
             }.onSuccess {
-                clearErrorBanner()
-                removePendingBubble()
-                it.forEach(::addMessage)
+                performMessageUpdatesWithoutAnimation {
+                    clearErrorBanner()
+                    it.forEach(::addMessage)
+                    removePendingBubble()
+                }
             }.onFailure {
-                removePendingBubble()
-                input.setText(text)
-                handleSessionError(it, fallback = "发送失败")
+                performMessageUpdatesWithoutAnimation {
+                    removePendingBubble()
+                    input.setText(text)
+                    handleSessionError(it, fallback = "发送失败")
+                }
             }.also {
                 setSending(false)
             }
@@ -583,8 +590,10 @@ class HermesLiveChatActivity : Activity() {
     private fun blockSession(message: String) {
         if (!sessionBlocked) {
             sessionBlocked = true
-            removePendingBubble()
-            removeWelcomePlaceholder()
+            performMessageUpdatesWithoutAnimation {
+                removePendingBubble()
+                removeWelcomePlaceholder()
+            }
             showErrorBanner(message)
         }
         started = false
@@ -606,7 +615,7 @@ class HermesLiveChatActivity : Activity() {
             closedConversationIds(HermesLiveChat.conversations(), activeId)
         }.getOrDefault(emptyList())
         activeId?.let { conversationId ->
-            HermesLiveChat.history(conversationId).forEach(::addMessage)
+            HermesLiveChat.history(conversationId).forEach { addMessage(it, allowPendingClaim = false) }
         }
         // Render the prefetched welcome whenever there is no active
         // conversation — first visit, or the previous one is closed.
@@ -766,23 +775,31 @@ class HermesLiveChatActivity : Activity() {
             if (messageKeys.isNotEmpty()) return
         }
         if (welcomePlaceholder != null) return
-        welcomePlaceholder = addBubble(text, mine = false, createdAt = nowSeconds())
+        val row = buildTextRow(text, mine = false, createdAt = nowSeconds())
+        val pendingIndex = pendingBubble?.let(messages::indexOfChild)?.takeIf { it >= 0 }
+        if (pendingIndex != null) {
+            messages.addView(row, pendingIndex)
+        } else {
+            messages.addView(row)
+        }
+        welcomePlaceholder = row
+        welcomePlaceholderText = text
+        requestScrollToBottom()
     }
 
     private fun removeWelcomePlaceholder() {
         welcomePlaceholder?.let(messages::removeView)
         welcomePlaceholder = null
+        welcomePlaceholderText = null
     }
 
     // showPendingBubble renders the visitor's outgoing text optimistically while
-    // the send is in flight. It is appended after the welcome placeholder, so the
-    // greeting stays on top; removePendingBubble clears it before the server's
-    // ordered [welcome, visitor] messages are added, which keeps the welcome
-    // above the confirmed message instead of being re-appended below it.
+    // the send is in flight. Server-confirmed text messages claim this row so
+    // the UI does not remove and re-add the bubble when the response arrives.
     private fun showPendingBubble(text: String) {
         removePendingBubble()
         pendingText = text
-        pendingBubble = addBubble(text, mine = true)
+        pendingBubble = addBubble(text, mine = true, createdAt = nowSeconds())
     }
 
     private fun removePendingBubble() {
@@ -791,20 +808,89 @@ class HermesLiveChatActivity : Activity() {
         pendingText = null
     }
 
-    private fun addMessage(message: Message) {
+    private fun addMessage(message: Message, allowPendingClaim: Boolean = true) {
         if (hasMessageIdentity(message)) {
-            if (matchesPending(message)) removePendingBubble()
             return
         }
         rememberMessageKeys(message)
         if (message.contentType == "welcome") {
             hasPersistedWelcome = true
-            removeWelcomePlaceholder()
+            if (claimWelcomePlaceholder(message)) {
+                markMessageReadIfNeeded(message)
+                requestScrollToBottom()
+                return
+            }
+            if (insertWelcomeBeforePendingIfNeeded(message)) {
+                markMessageReadIfNeeded(message)
+                requestScrollToBottom()
+                return
+            }
         }
-        if (matchesPending(message)) removePendingBubble()
+        if (allowPendingClaim && claimPendingBubble(message)) {
+            requestScrollToBottom()
+            return
+        }
 
         addBubble(message, mine = message.senderType == "visitor")
         markMessageReadIfNeeded(message)
+    }
+
+    private fun claimWelcomePlaceholder(message: Message): Boolean {
+        val placeholder = welcomePlaceholder ?: return false
+        if (message.contentType != "welcome") return false
+
+        val incoming = messageDisplayText(message).trim()
+        val existing = welcomePlaceholderText?.trim()
+        if (incoming.isNotEmpty() && existing != null && incoming != existing) {
+            replaceMessageRow(placeholder, buildMessageRow(message, mine = message.senderType == "visitor"))
+        } else {
+            val welcomeIndex = messages.indexOfChild(placeholder)
+            val pendingIndex = pendingBubble?.let(messages::indexOfChild) ?: -1
+            if (welcomeIndex >= 0 && pendingIndex >= 0 && welcomeIndex > pendingIndex) {
+                messages.removeView(placeholder)
+                messages.addView(placeholder, pendingIndex)
+            }
+        }
+        welcomePlaceholder = null
+        welcomePlaceholderText = null
+        return true
+    }
+
+    private fun insertWelcomeBeforePendingIfNeeded(message: Message): Boolean {
+        if (message.contentType != "welcome") return false
+        val pending = pendingBubble ?: return false
+        val row = buildMessageRow(message, mine = message.senderType == "visitor")
+        val index = messages.indexOfChild(pending)
+        if (index >= 0) {
+            messages.addView(row, index)
+        } else {
+            messages.addView(row)
+        }
+        return true
+    }
+
+    private fun claimPendingBubble(message: Message): Boolean {
+        val pending = pendingBubble ?: return false
+        if (!matchesPending(message)) return false
+
+        val incoming = messageDisplayText(message).trim()
+        val expected = pendingText?.trim()
+        if (expected != null && incoming != expected) {
+            replaceMessageRow(pending, buildMessageRow(message, mine = true))
+        }
+        pendingBubble = null
+        pendingText = null
+        return true
+    }
+
+    private fun replaceMessageRow(oldView: View, newView: View) {
+        val index = messages.indexOfChild(oldView)
+        messages.removeView(oldView)
+        if (index >= 0) {
+            messages.addView(newView, index)
+        } else {
+            messages.addView(newView)
+        }
     }
 
     private fun markMessageReadIfNeeded(message: Message) {
@@ -850,22 +936,51 @@ class HermesLiveChatActivity : Activity() {
     }
 
     private fun addBubble(text: String, mine: Boolean, createdAt: Long? = null): View {
+        val row = buildTextRow(text, mine, createdAt)
+        messages.addView(row)
+        requestScrollToBottom()
+        return row
+    }
+
+    private fun buildTextRow(text: String, mine: Boolean, createdAt: Long? = null): View {
         val row = bubbleRow(mine)
         val column = bubbleColumn(mine).apply {
             addView(bubbleLabel(text, mine))
             if (createdAt != null && createdAt > 0) addView(bubbleTimestamp(createdAt))
         }
         row.addView(column)
-        messages.addView(row)
-        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
         return row
     }
 
     private fun addBubble(message: Message, mine: Boolean): View {
         val row = buildMessageRow(message, mine)
         messages.addView(row)
-        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+        requestScrollToBottom()
         return row
+    }
+
+    private fun requestScrollToBottom() {
+        if (suppressMessageScroll) {
+            needsScrollAfterSuppressedUpdate = true
+            return
+        }
+        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
+
+    private fun performMessageUpdatesWithoutAnimation(updates: () -> Unit) {
+        val wasSuppressing = suppressMessageScroll
+        suppressMessageScroll = true
+        messages.suppressLayout(true)
+        try {
+            updates()
+        } finally {
+            messages.suppressLayout(false)
+            suppressMessageScroll = wasSuppressing
+        }
+        if (!wasSuppressing && needsScrollAfterSuppressedUpdate) {
+            needsScrollAfterSuppressedUpdate = false
+            scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+        }
     }
 
     private fun buildMessageRow(message: Message, mine: Boolean): View {
