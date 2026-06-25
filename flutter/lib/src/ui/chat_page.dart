@@ -2,12 +2,16 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart' hide ConnectionState;
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../client.dart';
 import '../errors.dart';
+import '../internal/message_content.dart';
 import '../models.dart';
 import '../public_types.dart';
+import 'chat_theme.dart';
 
 class HermesLiveChatLauncher extends StatelessWidget {
   const HermesLiveChatLauncher({
@@ -431,7 +435,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
 
   void _markVisibleMessagesRead() {
     for (final message in _messages) {
-      if (message.senderType == 'visitor') continue;
+      if (MessageSenderType.fromRaw(message.senderType).isMine) continue;
       if (message.readAt != null) continue;
       if (message.uuid.isEmpty || message.conversationId.isEmpty) continue;
       if (!_readMarkedMessageIds.add(message.uuid)) continue;
@@ -482,41 +486,50 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(28),
-          child: _ConnectionBar(state: _connectionState),
-        ),
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            if (_errorText != null)
-              _ErrorBanner(
-                message: _errorText!,
-                onClose: () {
-                  if (_sessionBlocked) return;
-                  setState(() {
-                    _errorText = null;
-                  });
-                },
+    // 注入固定 Theme：让本页所有 `Theme.of(context).colorScheme` 取色都落到 widget 风格，
+    // 不受宿主 App 主题影响。Builder 确保下方 colorScheme 读取到的是注入后的新 Theme。
+    return Theme(
+      data: hermesChatTheme(),
+      child: Builder(
+        builder: (context) {
+          final colorScheme = Theme.of(context).colorScheme;
+          return Scaffold(
+            appBar: AppBar(
+              title: Text(widget.title),
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(28),
+                child: _ConnectionBar(state: _connectionState),
               ),
-            Expanded(
-              child: _buildMessageList(colorScheme),
             ),
-            _Composer(
-              controller: _input,
-              enabled: !_conversationClosed && !_sessionBlocked,
-              busy: _starting || _sending || _uploadingImage,
-              uploadingImage: _uploadingImage,
-              onSend: _sendText,
-              onAttachImage: _pickAndSendImage,
+            body: SafeArea(
+              child: Column(
+                children: [
+                  if (_errorText != null)
+                    _ErrorBanner(
+                      message: _errorText!,
+                      onClose: () {
+                        if (_sessionBlocked) return;
+                        setState(() {
+                          _errorText = null;
+                        });
+                      },
+                    ),
+                  Expanded(
+                    child: _buildMessageList(colorScheme),
+                  ),
+                  _Composer(
+                    controller: _input,
+                    enabled: !_conversationClosed && !_sessionBlocked,
+                    busy: _starting || _sending || _uploadingImage,
+                    uploadingImage: _uploadingImage,
+                    onSend: _sendText,
+                    onAttachImage: _pickAndSendImage,
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -590,7 +603,7 @@ class _HermesLiveChatPageState extends State<HermesLiveChatPage> {
       clientMsgId: 'welcome',
       senderType: 'system',
       senderId: 'system',
-      contentType: 'welcome',
+      contentType: MessageContentType.welcome.raw,
       content: {'text': _welcome},
       createdAt: _welcomeCreatedAt(),
     );
@@ -735,11 +748,13 @@ class _MessageBubble extends StatelessWidget {
   factory _MessageBubble.fromMessage(Message message) {
     final content = message.content;
     final imageUrl =
-        message.contentType == 'image' ? content['url']?.toString() : null;
+        MessageContentType.fromRaw(message.contentType) == MessageContentType.image
+            ? content['url']?.toString()
+            : null;
     return _MessageBubble(
       text: _textForMessage(message),
       imageUrl: imageUrl,
-      mine: message.senderType == 'visitor',
+      mine: MessageSenderType.fromRaw(message.senderType).isMine,
       senderType: message.senderType,
       createdAt: message.createdAt,
     );
@@ -757,17 +772,22 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final background =
-        mine ? colorScheme.primary : colorScheme.surfaceContainerHighest;
+    // 访客气泡 = 主色实底；bot 气泡 = 白底 + 描边（与 widget 卡片化风格一致）。
+    final background = mine ? colorScheme.primary : HermesChatPalette.surface;
     final foreground = mine ? colorScheme.onPrimary : colorScheme.onSurface;
     final alignment = mine ? Alignment.centerRight : Alignment.centerLeft;
     final columnAlignment =
         mine ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    // 圆角 16，贴近发送方的一角收成小尾角。
     final radius = BorderRadius.only(
-      topLeft: const Radius.circular(12),
-      topRight: const Radius.circular(12),
-      bottomLeft: Radius.circular(mine ? 12 : 3),
-      bottomRight: Radius.circular(mine ? 3 : 12),
+      topLeft: const Radius.circular(HermesChatPalette.bubbleRadius),
+      topRight: const Radius.circular(HermesChatPalette.bubbleRadius),
+      bottomLeft: Radius.circular(
+        mine ? HermesChatPalette.bubbleRadius : HermesChatPalette.bubbleTailRadius,
+      ),
+      bottomRight: Radius.circular(
+        mine ? HermesChatPalette.bubbleTailRadius : HermesChatPalette.bubbleRadius,
+      ),
     );
 
     return Align(
@@ -783,6 +803,10 @@ class _MessageBubble extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: background,
                   borderRadius: radius,
+                  // bot 气泡描边；访客气泡为实底无描边。
+                  border: mine
+                      ? null
+                      : Border.all(color: HermesChatPalette.botBubbleBorder),
                 ),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -818,16 +842,25 @@ class _MessageBubble extends StatelessWidget {
                           ),
                         ),
                       if (text.isNotEmpty)
-                        RichText(
-                          text: TextSpan(
-                            style: DefaultTextStyle.of(context).style.copyWith(
-                                  color: foreground,
-                                ),
-                            children: mine
-                                ? [TextSpan(text: text)]
-                                : _inlineMarkdownSpans(text),
-                          ),
-                        ),
+                        // 本人消息纯文本展示；对方消息走 flutter_markdown_plus 渲染，
+                        // 链接 / 内联图片 / 列表 / 粗斜体均与 widget 对齐。
+                        mine
+                            ? Text(
+                                text,
+                                style: DefaultTextStyle.of(context)
+                                    .style
+                                    .copyWith(color: foreground),
+                              )
+                            : MarkdownBody(
+                                data: text,
+                                selectable: false,
+                                styleSheet:
+                                    _markdownStyleSheet(context, foreground),
+                                onTapLink: (_, href, __) =>
+                                    unawaited(_openMarkdownLink(href)),
+                                imageBuilder: (uri, _, __) =>
+                                    _buildMarkdownImage(uri),
+                              ),
                     ],
                   ),
                 ),
@@ -850,75 +883,61 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-List<TextSpan> _inlineMarkdownSpans(String text) {
-  final spans = <TextSpan>[];
-  var index = 0;
-  while (index < text.length) {
-    final boldMarker = text.startsWith('**', index)
-        ? '**'
-        : text.startsWith('__', index)
-            ? '__'
-            : null;
-    if (boldMarker != null) {
-      final close = text.indexOf(boldMarker, index + boldMarker.length);
-      if (close > index + boldMarker.length) {
-        spans.add(
-          TextSpan(
-            text: text.substring(index + boldMarker.length, close),
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-        );
-        index = close + boldMarker.length;
-        continue;
-      }
-    }
-
-    if (text[index] == '`') {
-      final close = text.indexOf('`', index + 1);
-      if (close > index + 1) {
-        spans.add(
-          TextSpan(
-            text: text.substring(index + 1, close),
-            style: const TextStyle(fontFamily: 'monospace'),
-          ),
-        );
-        index = close + 1;
-        continue;
-      }
-    }
-
-    final italicMarker = text[index] == '*'
-        ? '*'
-        : text[index] == '_'
-            ? '_'
-            : null;
-    if (italicMarker != null) {
-      final close = text.indexOf(italicMarker, index + 1);
-      if (close > index + 1) {
-        spans.add(
-          TextSpan(
-            text: text.substring(index + 1, close),
-            style: const TextStyle(fontStyle: FontStyle.italic),
-          ),
-        );
-        index = close + 1;
-        continue;
-      }
-    }
-
-    final next = _nextMarkdownMarker(text, index + 1);
-    spans.add(TextSpan(text: text.substring(index, next)));
-    index = next;
-  }
-  return spans;
+/// 构造 bot 气泡的 Markdown 样式表，对齐 widget `.md-body`。
+///
+/// [foreground] 正文主色（bot 气泡为 `#111827`）；链接、行内 code、列表 bullet 的
+/// 视觉均与 widget 同源。
+MarkdownStyleSheet _markdownStyleSheet(BuildContext context, Color foreground) {
+  final base = MarkdownStyleSheet.fromTheme(Theme.of(context));
+  return base.copyWith(
+    p: TextStyle(color: foreground, fontSize: 15, height: 1.4),
+    a: const TextStyle(
+      color: HermesChatPalette.primary,
+      decoration: TextDecoration.underline,
+    ),
+    code: TextStyle(
+      color: foreground,
+      fontSize: 13,
+      fontFamily: 'monospace',
+      backgroundColor: HermesChatPalette.surfaceMuted,
+    ),
+    listBullet: TextStyle(color: foreground, fontSize: 15),
+    blockSpacing: 6,
+    listIndent: 18,
+  );
 }
 
-int _nextMarkdownMarker(String text, int startIndex) {
-  for (var i = startIndex; i < text.length; i += 1) {
-    final char = text[i];
-    if (char == '*' || char == '_' || char == '`') return i;
-  }
-  return text.length;
+/// 点击 markdown 链接时用外部浏览器打开；空链接 / 解析失败 / 启动失败均静默不打断聊天。
+Future<void> _openMarkdownLink(String? href) async {
+  if (href == null || href.isEmpty) return;
+  final uri = Uri.tryParse(href);
+  if (uri == null) return;
+  await launchUrl(uri, mode: LaunchMode.externalApplication)
+      .catchError((_) => false);
+}
+
+/// 渲染 markdown 正文里的内联图片 `![](url)`：限制最大尺寸、弱面色占位、失败兜底文案。
+Widget _buildMarkdownImage(Uri uri) {
+  return ConstrainedBox(
+    constraints: const BoxConstraints(maxWidth: 240, maxHeight: 320),
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: ColoredBox(
+        color: HermesChatPalette.surfaceMuted,
+        child: Image.network(
+          uri.toString(),
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => const Padding(
+            padding: EdgeInsets.all(8),
+            child: Text(
+              '图片加载失败',
+              style: TextStyle(color: HermesChatPalette.textMuted),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 String _formatMessageTime(int seconds) {
@@ -1176,31 +1195,24 @@ class _TypingDotsState extends State<_TypingDots>
   }
 }
 
+/// 取消息要展示的文案。IO 薄层：从 content 取出原始字段，规则委托给纯函数 [MessageDisplayRules.displayText]。
 String _textForMessage(Message message) {
-  if (message.contentType == 'text') {
-    return message.content['text']?.toString() ?? '';
-  }
-  if (message.contentType == 'welcome' || message.contentType == 'close') {
-    return message.content['text']?.toString() ?? '';
-  }
-  if (message.contentType == 'image') {
-    return message.content['caption']?.toString() ?? '';
-  }
-  return message.content['text']?.toString() ?? '[${message.contentType}]';
+  return MessageDisplayRules.displayText(
+    rawContentType: message.contentType,
+    text: message.content['text']?.toString(),
+    caption: message.content['caption']?.toString(),
+  );
 }
 
 int _compareMessages(Message a, Message b) {
   final byTime = a.createdAt.compareTo(b.createdAt);
   if (byTime != 0) return byTime;
-  final byRank = _messageSortRank(a).compareTo(_messageSortRank(b));
+  final byRank =
+      MessageDisplayRules.sortRank(a.contentType).compareTo(
+    MessageDisplayRules.sortRank(b.contentType),
+  );
   if (byRank != 0) return byRank;
   return a.uuid.compareTo(b.uuid);
-}
-
-int _messageSortRank(Message message) {
-  if (message.contentType == 'welcome') return 0;
-  if (message.contentType == 'close') return 2;
-  return 1;
 }
 
 String _mimeTypeForImage(String name) {
