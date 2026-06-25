@@ -34,6 +34,9 @@ public final class HermesLiveChatViewController: UIViewController {
     private let loadingStack = UIStackView()
     private let loadingDots = LoadingDotsView()
     private let loadingLabel = UILabel()
+    // 自定义 header 的状态点与状态文案（绑定实时连接态）。
+    private let headerStatusDot = UIView()
+    private let headerStatusLabel = UILabel()
     private var composerBottomConstraint: NSLayoutConstraint?
     private var keyboardObservers: [NSObjectProtocol] = []
     private var messageKeys = Set<String>()
@@ -92,7 +95,7 @@ public final class HermesLiveChatViewController: UIViewController {
 
     public override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = Palette.screenBackground
         buildUI()
         observeKeyboard()
         observeEvents()
@@ -112,11 +115,73 @@ public final class HermesLiveChatViewController: UIViewController {
     }
 
     private func buildUI() {
+        configureHeader()
         configureScroll()
         configureErrorBanner()
         configureComposer()
         configureLoading()
         installLayoutConstraints()
+    }
+
+    /// 自定义 header：logo 标记 + 标题 + 连接状态圆点，替换系统 nav title，对齐 widget 头部。
+    private func configureHeader() {
+        // logo 标记：圆角蓝块 + 白色气泡图标。
+        let mark = UIView()
+        mark.backgroundColor = Palette.primary
+        mark.layer.cornerRadius = 7
+        mark.translatesAutoresizingMaskIntoConstraints = false
+        let markGlyph = UIImageView(image: UIImage(systemName: "bubble.left.and.bubble.right.fill"))
+        markGlyph.tintColor = Palette.onPrimary
+        markGlyph.contentMode = .scaleAspectFit
+        markGlyph.translatesAutoresizingMaskIntoConstraints = false
+        mark.addSubview(markGlyph)
+        NSLayoutConstraint.activate([
+            mark.widthAnchor.constraint(equalToConstant: 26),
+            mark.heightAnchor.constraint(equalToConstant: 26),
+            markGlyph.centerXAnchor.constraint(equalTo: mark.centerXAnchor),
+            markGlyph.centerYAnchor.constraint(equalTo: mark.centerYAnchor),
+            markGlyph.widthAnchor.constraint(equalToConstant: 15),
+            markGlyph.heightAnchor.constraint(equalToConstant: 15),
+        ])
+
+        let titleLabel = UILabel()
+        titleLabel.text = title
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.textColor = Palette.textPrimary
+
+        headerStatusDot.translatesAutoresizingMaskIntoConstraints = false
+        headerStatusDot.layer.cornerRadius = 3.5
+        NSLayoutConstraint.activate([
+            headerStatusDot.widthAnchor.constraint(equalToConstant: 7),
+            headerStatusDot.heightAnchor.constraint(equalToConstant: 7),
+        ])
+        headerStatusLabel.font = .systemFont(ofSize: 12)
+        headerStatusLabel.textColor = Palette.textSecondary
+
+        let statusRow = UIStackView(arrangedSubviews: [headerStatusDot, headerStatusLabel])
+        statusRow.axis = .horizontal
+        statusRow.alignment = .center
+        statusRow.spacing = 5
+
+        let textColumn = UIStackView(arrangedSubviews: [titleLabel, statusRow])
+        textColumn.axis = .vertical
+        textColumn.alignment = .leading
+        textColumn.spacing = 1
+
+        let header = UIStackView(arrangedSubviews: [mark, textColumn])
+        header.axis = .horizontal
+        header.alignment = .center
+        header.spacing = 9
+        navigationItem.titleView = header
+
+        // 初始为「未连接」，随 connectionStateChanged 事件更新。
+        updateConnectionStatus(.idle)
+    }
+
+    /// 把实时连接态映射到 header 状态点颜色 + 文案（规则来自纯函数 [ConnectionStatusPresenter]）。
+    private func updateConnectionStatus(_ state: LiveChatConnectionState) {
+        headerStatusDot.backgroundColor = Palette.color(for: ConnectionStatusPresenter.tone(for: state))
+        headerStatusLabel.text = ConnectionStatusPresenter.label(for: state)
     }
 
     private func configureScroll() {
@@ -141,16 +206,30 @@ public final class HermesLiveChatViewController: UIViewController {
         input.delegate = self
         input.addTarget(self, action: #selector(inputChanged), for: .editingChanged)
         input.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        // 附件按钮：圆形、透明底、弱色图标（与 widget 一致）。
         attachButton.setImage(UIImage(systemName: "photo"), for: .normal)
+        attachButton.tintColor = Palette.textMuted
         attachButton.accessibilityLabel = "发送图片"
         attachButton.addTarget(self, action: #selector(attachTapped), for: .touchUpInside)
         attachButton.widthAnchor.constraint(equalToConstant: 40).isActive = true
         attachButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        sendButton.setTitle("发送", for: .normal)
+
+        // 发送按钮：圆形蓝底 + 白色上箭头图标（替代原「发送」文字按钮）。
+        sendButton.setImage(UIImage(systemName: "arrow.up"), for: .normal)
+        sendButton.tintColor = Palette.onPrimary
+        sendButton.backgroundColor = Palette.primary
+        sendButton.layer.cornerRadius = 20
+        sendButton.layer.masksToBounds = true
+        sendButton.accessibilityLabel = "发送"
         sendButton.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
+        sendButton.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        sendButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
+
         updateComposerState()
         composer.axis = .horizontal
         composer.spacing = 8
+        composer.alignment = .center
         composer.translatesAutoresizingMaskIntoConstraints = false
         composer.addArrangedSubview(attachButton)
         composer.addArrangedSubview(input)
@@ -163,8 +242,8 @@ public final class HermesLiveChatViewController: UIViewController {
         errorBanner.numberOfLines = 0
         errorBanner.font = .preferredFont(forTextStyle: .footnote)
         errorBanner.adjustsFontForContentSizeCategory = true
-        errorBanner.textColor = .systemRed
-        errorBanner.backgroundColor = UIColor.systemRed.withAlphaComponent(0.12)
+        errorBanner.textColor = Palette.errorText
+        errorBanner.backgroundColor = Palette.errorBackground
         errorBanner.layer.cornerRadius = 8
         errorBanner.layer.masksToBounds = true
         errorBanner.translatesAutoresizingMaskIntoConstraints = false
@@ -174,14 +253,14 @@ public final class HermesLiveChatViewController: UIViewController {
     private func configureLoading() {
         loadingLabel.text = "正在加载..."
         loadingLabel.font = .preferredFont(forTextStyle: .subheadline)
-        loadingLabel.textColor = .secondaryLabel
+        loadingLabel.textColor = Palette.textSecondary
         loadingLabel.adjustsFontForContentSizeCategory = true
         loadingStack.axis = .horizontal
         loadingStack.alignment = .center
         loadingStack.spacing = 10
         loadingStack.layoutMargins = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 16)
         loadingStack.isLayoutMarginsRelativeArrangement = true
-        loadingStack.backgroundColor = .secondarySystemBackground
+        loadingStack.backgroundColor = Palette.surface
         loadingStack.layer.cornerRadius = 20
         loadingStack.layer.shadowColor = UIColor.black.cgColor
         loadingStack.layer.shadowOpacity = 0.08
@@ -278,6 +357,8 @@ public final class HermesLiveChatViewController: UIViewController {
             for await event in HermesLiveChat.shared.events() {
                 await MainActor.run {
                     switch event {
+                    case .connectionStateChanged(let state):
+                        updateConnectionStatus(state)
                     case .messageReceived(let message, _):
                         addMessage(message)
                     case .conversationUpdated(let conversation):
@@ -464,8 +545,12 @@ public final class HermesLiveChatViewController: UIViewController {
         let busy = isLoadingInitialState || isSending || isUploadingImage || sessionBlocked
         input.isEnabled = !busy
         attachButton.isEnabled = !busy
-        sendButton.isEnabled = !busy && hasText
-        sendButton.setTitle(sessionBlocked ? "不可用" : isLoadingInitialState ? "加载中" : isUploadingImage ? "上传中" : isSending ? "发送中" : "发送", for: .normal)
+        let canSend = !busy && hasText
+        sendButton.isEnabled = canSend
+        // 圆形图标按钮：用底色透明度表达可用 / 不可用，替代原文字态。
+        sendButton.backgroundColor = canSend ? Palette.primary : Palette.primary.withAlphaComponent(0.4)
+        // 会话不可用时给出无障碍提示，文案不再占用按钮本身。
+        sendButton.accessibilityLabel = sessionBlocked ? "会话不可用" : "发送"
     }
 
     @objc private func inputChanged() {
@@ -606,7 +691,7 @@ public final class HermesLiveChatViewController: UIViewController {
     private func makeHistoryToggle() -> UIButton {
         let button = UIButton(type: .system)
         button.titleLabel?.font = .preferredFont(forTextStyle: .footnote)
-        button.setTitleColor(.secondaryLabel, for: .normal)
+        button.setTitleColor(Palette.textMuted, for: .normal)
         button.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)
         button.addTarget(self, action: #selector(historyToggleTapped), for: .touchUpInside)
         return button
@@ -647,7 +732,7 @@ public final class HermesLiveChatViewController: UIViewController {
         var insertAt = historyToggle != nil ? 1 : 0
         for message in history {
             if let key = messageKey(message), !messageKeys.insert(key).inserted { continue }
-            let row = makeMessageRow(message, mine: message.senderType == "visitor")
+            let row = makeMessageRow(message, mine: message.isMine)
             stack.insertArrangedSubview(row, at: insertAt)
             insertAt += 1
             markMessageReadIfNeeded(message)
@@ -663,7 +748,7 @@ public final class HermesLiveChatViewController: UIViewController {
         if let key = messageKey(message), !messageKeys.insert(key).inserted {
             return
         }
-        if message.contentType == "welcome" {
+        if message.contentKind == .welcome {
             hasPersistedWelcome = true
             if claimWelcomePlaceholder(for: message) {
                 markMessageReadIfNeeded(message)
@@ -680,17 +765,17 @@ public final class HermesLiveChatViewController: UIViewController {
             requestMessageScrollToBottom()
             return
         }
-        addBubble(message, mine: message.senderType == "visitor")
+        addBubble(message, mine: message.isMine)
         markMessageReadIfNeeded(message)
     }
 
     private func claimWelcomePlaceholder(for message: Message) -> Bool {
-        guard message.contentType == "welcome", let placeholder = welcomePlaceholder else { return false }
+        guard message.contentKind == .welcome, let placeholder = welcomePlaceholder else { return false }
 
         let incoming = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
         let existing = welcomePlaceholderText?.trimmingCharacters(in: .whitespacesAndNewlines)
         if !incoming.isEmpty, let existing, incoming != existing {
-            let row = makeMessageRow(message, mine: message.senderType == "visitor")
+            let row = makeMessageRow(message, mine: message.isMine)
             replaceArrangedSubview(placeholder, with: row)
         } else if let pendingBubble,
                   let welcomeIndex = stack.arrangedSubviews.firstIndex(where: { $0 === placeholder }),
@@ -705,8 +790,8 @@ public final class HermesLiveChatViewController: UIViewController {
     }
 
     private func insertWelcomeBeforePendingIfNeeded(_ message: Message) -> Bool {
-        guard message.contentType == "welcome", let pendingBubble else { return false }
-        let row = makeMessageRow(message, mine: message.senderType == "visitor")
+        guard message.contentKind == .welcome, let pendingBubble else { return false }
+        let row = makeMessageRow(message, mine: message.isMine)
         if let index = stack.arrangedSubviews.firstIndex(where: { $0 === pendingBubble }) {
             stack.insertArrangedSubview(row, at: index)
         } else {
@@ -717,7 +802,7 @@ public final class HermesLiveChatViewController: UIViewController {
 
     private func claimPendingBubble(for message: Message) -> Bool {
         guard let pendingRow = pendingBubble else { return false }
-        guard message.senderType == "visitor", message.contentType == "text" else { return false }
+        guard message.isMine, message.contentKind == .text else { return false }
 
         let incoming = message.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
         let expected = pendingText?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -743,7 +828,7 @@ public final class HermesLiveChatViewController: UIViewController {
     }
 
     private func markMessageReadIfNeeded(_ message: Message) {
-        guard message.senderType != "visitor" else { return }
+        guard !message.isMine else { return }
         guard message.readAt == nil else { return }
         let messageId = message.uuid.trimmingCharacters(in: .whitespacesAndNewlines)
         let conversationId = message.conversationId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -807,31 +892,24 @@ public final class HermesLiveChatViewController: UIViewController {
     }
 
     private func makeBubbleView(text: String, mine: Bool) -> UIView {
+        // 本人消息纯文本展示；对方消息走 markdown 块栈渲染，与 widget 对齐。
+        mine ? makePlainBubbleView(text: text) : makeMarkdownBubbleView(text: text)
+    }
+
+    /// 访客（本人）气泡：纯文本 + 主色实底。
+    private func makePlainBubbleView(text: String) -> UIView {
         let label = UILabel()
         label.numberOfLines = 0
         label.textAlignment = .natural
         label.font = .preferredFont(forTextStyle: .body)
         label.adjustsFontForContentSizeCategory = true
         label.lineBreakMode = .byWordWrapping
-        label.textColor = mine ? .white : .label
-        label.attributedText = mine
-            ? NSAttributedString(
-                string: text,
-                attributes: [.font: label.font as Any, .foregroundColor: label.textColor as Any]
-            )
-            : Self.inlineMarkdown(
-                text,
-                font: label.font,
-                color: label.textColor
-            )
+        label.textColor = Palette.onPrimary
+        label.text = text
         label.setContentHuggingPriority(.required, for: .vertical)
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let bubble = UIView()
-        bubble.translatesAutoresizingMaskIntoConstraints = false
-        bubble.backgroundColor = mine ? .systemBlue : .secondarySystemBackground
-        bubble.layer.cornerRadius = 17
-        bubble.layer.masksToBounds = true
+        let bubble = makeBubbleContainer(mine: true)
         bubble.addSubview(label)
         label.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -843,8 +921,61 @@ public final class HermesLiveChatViewController: UIViewController {
         return bubble
     }
 
+    /// 对方（bot / 客服 / 系统）气泡：swift-markdown 渲染出的块视图纵向栈 + 白底描边。
+    private func makeMarkdownBubbleView(text: String) -> UIView {
+        let renderer = MarkdownRenderer(
+            baseFont: .preferredFont(forTextStyle: .body),
+            textColor: Palette.textPrimary,
+            imageWidth: Self.imageBubbleWidth
+        )
+        let blocks = renderer.makeViews(from: text)
+        // 解析不出任何块（如纯空白）时兜底成一个纯文本标签，避免气泡空白。
+        let arranged = blocks.isEmpty ? [Self.fallbackLabel(text)] : blocks
+
+        let content = UIStackView(arrangedSubviews: arranged)
+        content.axis = .vertical
+        content.alignment = .leading
+        content.spacing = 6
+        content.translatesAutoresizingMaskIntoConstraints = false
+
+        let bubble = makeBubbleContainer(mine: false)
+        bubble.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 8),
+            content.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 12),
+            content.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -12),
+            content.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -8),
+        ])
+        return bubble
+    }
+
+    /// 气泡容器：圆角 16 + 配色；非 mine（bot）加 1pt 描边。
+    private func makeBubbleContainer(mine: Bool) -> UIView {
+        let bubble = UIView()
+        bubble.translatesAutoresizingMaskIntoConstraints = false
+        bubble.backgroundColor = mine ? Palette.primary : Palette.surface
+        bubble.layer.cornerRadius = 16
+        bubble.layer.masksToBounds = true
+        if !mine {
+            bubble.layer.borderWidth = 1
+            bubble.layer.borderColor = Palette.botBubbleBorder.cgColor
+        }
+        return bubble
+    }
+
+    /// markdown 渲染兜底标签（解析为空时使用）。
+    private static func fallbackLabel(_ text: String) -> UILabel {
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.font = .preferredFont(forTextStyle: .body)
+        label.textColor = Palette.textPrimary
+        label.text = text
+        return label
+    }
+
     private func makeMessageBubbleView(_ message: Message, mine: Bool) -> UIView {
-        if message.contentType == "image", let url = message.content["url"] as? String, !url.isEmpty {
+        if MessageContentType.from(message.contentType) == .image,
+           let url = message.content["url"] as? String, !url.isEmpty {
             return makeImageBubbleView(url: url, mine: mine)
         }
         return makeBubbleView(text: message.displayText, mine: mine)
@@ -853,15 +984,19 @@ public final class HermesLiveChatViewController: UIViewController {
     private func makeImageBubbleView(url: String, mine: Bool) -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = mine ? .systemBlue : .secondarySystemBackground
-        container.layer.cornerRadius = 17
+        container.backgroundColor = mine ? Palette.primary : Palette.surface
+        container.layer.cornerRadius = 16
         container.layer.masksToBounds = true
+        if !mine {
+            container.layer.borderWidth = 1
+            container.layer.borderColor = Palette.botBubbleBorder.cgColor
+        }
 
         let imageView = UIImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.contentMode = .scaleAspectFit
         imageView.clipsToBounds = true
-        imageView.backgroundColor = .tertiarySystemFill
+        imageView.backgroundColor = Palette.surfaceMuted
         container.addSubview(imageView)
         let heightConstraint = imageView.heightAnchor.constraint(equalToConstant: 170)
         NSLayoutConstraint.activate([
@@ -893,70 +1028,6 @@ public final class HermesLiveChatViewController: UIViewController {
         return min(max(aspectHeight, 96), imageBubbleMaxHeight)
     }
 
-    private static func inlineMarkdown(_ text: String, font: UIFont, color: UIColor) -> NSAttributedString {
-        let result = NSMutableAttributedString()
-        var index = text.startIndex
-        while index < text.endIndex {
-            if let marker = markdownMarker(in: text, at: index, candidates: ["**", "__"]),
-               let close = text.range(of: marker, range: text.index(index, offsetBy: marker.count)..<text.endIndex),
-               close.lowerBound > text.index(index, offsetBy: marker.count) {
-                result.appendMarkdownSpan(
-                    String(text[text.index(index, offsetBy: marker.count)..<close.lowerBound]),
-                    font: font.bold(),
-                    color: color
-                )
-                index = close.upperBound
-                continue
-            }
-
-            if text[index] == "`",
-               let close = text[index...].dropFirst().firstIndex(of: "`"),
-               close > text.index(after: index) {
-                result.appendMarkdownSpan(
-                    String(text[text.index(after: index)..<close]),
-                    font: UIFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular),
-                    color: color
-                )
-                index = text.index(after: close)
-                continue
-            }
-
-            if let marker = markdownMarker(in: text, at: index, candidates: ["*", "_"]),
-               let close = text.range(of: marker, range: text.index(after: index)..<text.endIndex),
-               close.lowerBound > text.index(after: index) {
-                result.appendMarkdownSpan(
-                    String(text[text.index(after: index)..<close.lowerBound]),
-                    font: font.italic(),
-                    color: color
-                )
-                index = close.upperBound
-                continue
-            }
-
-            let next = nextMarkdownMarker(in: text, after: index)
-            result.appendMarkdownSpan(String(text[index..<next]), font: font, color: color)
-            index = next
-        }
-        return result
-    }
-
-    private static func markdownMarker(in text: String, at index: String.Index, candidates: [String]) -> String? {
-        candidates.first { marker in
-            text[index...].hasPrefix(marker)
-        }
-    }
-
-    private static func nextMarkdownMarker(in text: String, after index: String.Index) -> String.Index {
-        var cursor = text.index(after: index)
-        while cursor < text.endIndex {
-            if text[cursor] == "*" || text[cursor] == "_" || text[cursor] == "`" {
-                return cursor
-            }
-            cursor = text.index(after: cursor)
-        }
-        return text.endIndex
-    }
-
     private func makeBubbleColumn(mine: Bool, bubble: UIView, createdAt: Int?) -> UIStackView {
         let column = UIStackView()
         column.axis = .vertical
@@ -974,7 +1045,7 @@ public final class HermesLiveChatViewController: UIViewController {
         let time = UILabel()
         time.text = Self.formatTime(createdAt)
         time.font = .systemFont(ofSize: 11)
-        time.textColor = .secondaryLabel
+        time.textColor = Palette.textMuted
         return time
     }
 
@@ -1081,33 +1152,11 @@ extension HermesLiveChatViewController: UIImagePickerControllerDelegate, UINavig
     }
 }
 
-private extension NSMutableAttributedString {
-    func appendMarkdownSpan(_ text: String, font: UIFont, color: UIColor) {
-        append(NSAttributedString(
-            string: text,
-            attributes: [
-                .font: font,
-                .foregroundColor: color,
-            ]
-        ))
-    }
-}
-
-private extension UIFont {
-    func bold() -> UIFont {
-        withSymbolicTraits(.traitBold)
-    }
-
-    func italic() -> UIFont {
-        withSymbolicTraits(.traitItalic)
-    }
-
-    private func withSymbolicTraits(_ traits: UIFontDescriptor.SymbolicTraits) -> UIFont {
-        guard let descriptor = fontDescriptor.withSymbolicTraits(fontDescriptor.symbolicTraits.union(traits)) else {
-            return self
-        }
-        return UIFont(descriptor: descriptor, size: pointSize)
-    }
+private extension Message {
+    /// 是否本地访客自己发出（决定左右对齐与是否纯文本展示）。
+    var isMine: Bool { MessageSenderType.from(senderType).isMine }
+    /// 内容类型枚举，替代裸字符串比较。
+    var contentKind: MessageContentType { MessageContentType.from(contentType) }
 }
 
 private final class LoadingDotsView: UIView {
@@ -1171,7 +1220,7 @@ private final class LoadingDotsView: UIView {
 
         dots.forEach { dot in
             dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.backgroundColor = .secondaryLabel
+            dot.backgroundColor = Palette.textMuted
             dot.layer.cornerRadius = 3.5
             dot.alpha = 0.35
             NSLayoutConstraint.activate([

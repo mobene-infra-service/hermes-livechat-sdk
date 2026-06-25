@@ -30,14 +30,13 @@ public struct Message: Identifiable {
     public let readAt: Int?
     public let createdAt: Int
 
+    /// 气泡展示文案。规则委托纯函数 [MessageDisplayRules.displayText]，此处仅做 IO 取值。
     public var displayText: String {
-        if contentType == "text" || contentType == "welcome" || contentType == "close" {
-            return content["text"] as? String ?? ""
-        }
-        if contentType == "image" {
-            return content["url"] as? String ?? ""
-        }
-        return "[\(contentType)]"
+        MessageDisplayRules.displayText(
+            contentType: contentType,
+            text: content["text"] as? String,
+            url: content["url"] as? String
+        )
     }
 }
 
