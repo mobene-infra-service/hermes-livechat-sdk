@@ -15,11 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
-import android.text.SpannableStringBuilder
-import android.text.Spanned
 import android.text.TextWatcher
-import android.text.style.StyleSpan
-import android.text.style.TypefaceSpan
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -42,6 +38,14 @@ import com.mobene.hermes.livechat.HermesLiveChatEvent
 import com.mobene.hermes.livechat.LiveChatConnectionState
 import com.mobene.hermes.livechat.Message
 import com.mobene.hermes.livechat.VisitorIdentity
+import com.mobene.hermes.livechat.internal.MessageContentType
+import com.mobene.hermes.livechat.internal.MessageDisplayRules
+import com.mobene.hermes.livechat.internal.MessageSenderType
+import io.noties.markwon.AbstractMarkwonPlugin
+import io.noties.markwon.Markwon
+import io.noties.markwon.core.MarkwonTheme
+import io.noties.markwon.image.ImagesPlugin
+import io.noties.markwon.linkify.LinkifyPlugin
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -739,7 +743,7 @@ class HermesLiveChatActivity : Activity() {
         for (message in history) {
             if (hasMessageIdentity(message)) continue
             rememberMessageKeys(message)
-            val row = buildMessageRow(message, mine = message.senderType == "visitor")
+            val row = buildMessageRow(message, mine = message.isMine())
             messages.addView(row, insertAt)
             insertAt += 1
             markMessageReadIfNeeded(message)
@@ -813,7 +817,7 @@ class HermesLiveChatActivity : Activity() {
             return
         }
         rememberMessageKeys(message)
-        if (message.contentType == "welcome") {
+        if (MessageContentType.fromRaw(message.contentType) == MessageContentType.WELCOME) {
             hasPersistedWelcome = true
             if (claimWelcomePlaceholder(message)) {
                 markMessageReadIfNeeded(message)
@@ -831,18 +835,18 @@ class HermesLiveChatActivity : Activity() {
             return
         }
 
-        addBubble(message, mine = message.senderType == "visitor")
+        addBubble(message, mine = message.isMine())
         markMessageReadIfNeeded(message)
     }
 
     private fun claimWelcomePlaceholder(message: Message): Boolean {
         val placeholder = welcomePlaceholder ?: return false
-        if (message.contentType != "welcome") return false
+        if (MessageContentType.fromRaw(message.contentType) != MessageContentType.WELCOME) return false
 
         val incoming = messageDisplayText(message).trim()
         val existing = welcomePlaceholderText?.trim()
         if (incoming.isNotEmpty() && existing != null && incoming != existing) {
-            replaceMessageRow(placeholder, buildMessageRow(message, mine = message.senderType == "visitor"))
+            replaceMessageRow(placeholder, buildMessageRow(message, mine = message.isMine()))
         } else {
             val welcomeIndex = messages.indexOfChild(placeholder)
             val pendingIndex = pendingBubble?.let(messages::indexOfChild) ?: -1
@@ -857,9 +861,9 @@ class HermesLiveChatActivity : Activity() {
     }
 
     private fun insertWelcomeBeforePendingIfNeeded(message: Message): Boolean {
-        if (message.contentType != "welcome") return false
+        if (MessageContentType.fromRaw(message.contentType) != MessageContentType.WELCOME) return false
         val pending = pendingBubble ?: return false
-        val row = buildMessageRow(message, mine = message.senderType == "visitor")
+        val row = buildMessageRow(message, mine = message.isMine())
         val index = messages.indexOfChild(pending)
         if (index >= 0) {
             messages.addView(row, index)
@@ -896,7 +900,7 @@ class HermesLiveChatActivity : Activity() {
     private fun markMessageReadIfNeeded(message: Message) {
         val messageId = message.uuid.trim()
         val conversationId = message.conversationId.trim()
-        if (message.senderType == "visitor") return
+        if (message.isMine()) return
         if (message.readAt != null) return
         if (messageId.isBlank() || conversationId.isBlank()) return
         if (!readMarkedMessageIds.add(messageId)) return
@@ -910,14 +914,11 @@ class HermesLiveChatActivity : Activity() {
         }
     }
 
-    private fun messageDisplayText(message: Message): String {
-        val text = message.content.optString("text").trim()
-        if (text.isNotEmpty()) return text
-        return when (message.contentType) {
-            "image" -> ""
-            else -> "[${message.contentType}]"
-        }
-    }
+    private fun messageDisplayText(message: Message): String =
+        MessageDisplayRules.displayText(message.contentType, message.content.optString("text"))
+
+    /** 是否为本地访客自己发出的消息（决定左右对齐与是否纯文本展示）。 */
+    private fun Message.isMine(): Boolean = MessageSenderType.fromRaw(senderType).isMine
 
     private fun hasMessageIdentity(message: Message): Boolean =
         message.uuid.takeIf { it.isNotBlank() }?.let(messageKeys::contains) == true ||
@@ -930,8 +931,8 @@ class HermesLiveChatActivity : Activity() {
 
     private fun matchesPending(message: Message): Boolean {
         val text = pendingText ?: return false
-        return message.senderType == "visitor" &&
-            message.contentType == "text" &&
+        return message.isMine() &&
+            MessageContentType.fromRaw(message.contentType) == MessageContentType.TEXT &&
             message.content.optString("text").trim() == text
     }
 
@@ -986,7 +987,11 @@ class HermesLiveChatActivity : Activity() {
     private fun buildMessageRow(message: Message, mine: Boolean): View {
         val row = bubbleRow(mine)
         val column = bubbleColumn(mine).apply {
-            val imageUrl = if (message.contentType == "image") message.content.optString("url").trim() else ""
+            val imageUrl = if (MessageContentType.fromRaw(message.contentType) == MessageContentType.IMAGE) {
+                message.content.optString("url").trim()
+            } else {
+                ""
+            }
             if (imageUrl.isNotEmpty()) {
                 addView(imageBubble(imageUrl, mine))
             }
@@ -1031,8 +1036,33 @@ class HermesLiveChatActivity : Activity() {
         gravity = if (mine) Gravity.END else Gravity.START
     }
 
+    /**
+     * Markwon 渲染器（懒加载，依赖 Activity Context）。
+     *
+     * 用正式 Markdown 库替代原手写 inline 解析器：
+     * - [LinkifyPlugin] 把裸 URL 自动识别为可点击链接；
+     * - [ImagesPlugin] 渲染正文内联 `![](url)` 网络图片；
+     * - 自定义主题把链接、行内 code、列表 bullet 的配色对齐 widget 调色板。
+     *
+     * `setMarkdown` 会自动为 TextView 挂上 LinkMovementMethod，无需额外处理点击跳转。
+     */
+    private val markwon: Markwon by lazy {
+        Markwon.builder(this)
+            .usePlugin(LinkifyPlugin.create())
+            .usePlugin(ImagesPlugin.create())
+            .usePlugin(object : AbstractMarkwonPlugin() {
+                override fun configureTheme(builder: MarkwonTheme.Builder) {
+                    builder
+                        .linkColor(PRIMARY)                 // 链接色对齐 widget 主蓝
+                        .codeTextColor(TEXT_PRIMARY)        // 行内 code 文字色
+                        .codeBackgroundColor(SURFACE_MUTED) // 行内 code 底色 = 弱面色
+                        .bulletWidth(dp(5))                 // 无序列表 bullet 直径
+                }
+            })
+            .build()
+    }
+
     private fun bubbleLabel(text: String, mine: Boolean) = TextView(this).apply {
-        this.text = if (mine) text else inlineMarkdown(text)
         textSize = 15f
         setTextColor(if (mine) Color.WHITE else TEXT_PRIMARY)
         setLineSpacing(dp(2).toFloat(), 1.0f)
@@ -1044,78 +1074,13 @@ class HermesLiveChatActivity : Activity() {
             strokeWidth = if (mine) 0 else dp(1),
             radius = dp(16).toFloat(),
         )
-    }
-
-    private fun inlineMarkdown(text: String): CharSequence {
-        val result = SpannableStringBuilder()
-        var index = 0
-        while (index < text.length) {
-            val boldMarker = when {
-                text.startsWith("**", index) -> "**"
-                text.startsWith("__", index) -> "__"
-                else -> null
-            }
-            if (boldMarker != null) {
-                val close = text.indexOf(boldMarker, startIndex = index + boldMarker.length)
-                if (close > index + boldMarker.length) {
-                    result.appendMarkdownSpan(
-                        text.substring(index + boldMarker.length, close),
-                        StyleSpan(Typeface.BOLD),
-                    )
-                    index = close + boldMarker.length
-                    continue
-                }
-            }
-
-            if (text[index] == '`') {
-                val close = text.indexOf('`', startIndex = index + 1)
-                if (close > index + 1) {
-                    result.appendMarkdownSpan(
-                        text.substring(index + 1, close),
-                        TypefaceSpan("monospace"),
-                    )
-                    index = close + 1
-                    continue
-                }
-            }
-
-            val italicMarker = when (text[index]) {
-                '*' -> "*"
-                '_' -> "_"
-                else -> null
-            }
-            if (italicMarker != null) {
-                val close = text.indexOf(italicMarker, startIndex = index + 1)
-                if (close > index + 1) {
-                    result.appendMarkdownSpan(
-                        text.substring(index + 1, close),
-                        StyleSpan(Typeface.ITALIC),
-                    )
-                    index = close + 1
-                    continue
-                }
-            }
-
-            val next = text.indexOfFirst(index + 1) { it == '*' || it == '_' || it == '`' }
-                .takeIf { it >= 0 }
-                ?: text.length
-            result.append(text.substring(index, next))
-            index = next
+        // 本人消息保持纯文本（避免用户输入的 * _ 被误当 markdown 标记）；
+        // 对方（bot / 客服 / 系统）消息走 Markwon 渲染，与 widget 一致。
+        if (mine) {
+            this.text = text
+        } else {
+            markwon.setMarkdown(this, text)
         }
-        return result
-    }
-
-    private fun SpannableStringBuilder.appendMarkdownSpan(text: String, span: Any) {
-        val start = length
-        append(text)
-        setSpan(span, start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-    }
-
-    private inline fun String.indexOfFirst(startIndex: Int, predicate: (Char) -> Boolean): Int {
-        for (i in startIndex until length) {
-            if (predicate(this[i])) return i
-        }
-        return -1
     }
 
     private fun bubbleTimestamp(createdAt: Long) = TextView(this).apply {
